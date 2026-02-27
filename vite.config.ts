@@ -8,7 +8,7 @@ export default defineConfig({
   build: { outDir: 'dist', emptyOutDir: true },
   resolve: {
     alias: {
-      'xmem-ai': path.resolve(__dirname, '../sdk/xmem-ts/src'),
+      'xmem-ai': path.resolve(__dirname, '../sdk/xmem-ts/src/index.ts'),
     },
   },
   define: {

@@ -234,8 +234,8 @@ function setupSidebarEvents(sidebar: HTMLElement) {
       const resp = await retrieveAnswer(query);
       resultDiv.innerHTML = `
         <div class="xmem-answer">
-          <div class="xmem-answer-text">${escapeHtml(resp.answer)}</div>
-          ${resp.sources.length > 0 ? `
+          <div class="xmem-answer-text">${escapeHtml(resp.answer || 'No answer generated.')}</div>
+          ${(resp.sources && resp.sources.length > 0) ? `
             <div class="xmem-answer-sources">
               <span class="xmem-answer-sources-label">${resp.sources.length} source${resp.sources.length > 1 ? 's' : ''}</span>
               ${resp.sources.map((s) => `
