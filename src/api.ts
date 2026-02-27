@@ -3,14 +3,14 @@
  * Wraps the xmem-ai SDK client, reading config from chrome.storage.
  */
 
-import { XMemClient } from 'xmem-ai/client';
+import { XMemClient } from 'xmem-ai';
 import type {
   SourceRecord,
   IngestResult,
   RetrieveResult,
   SearchResult,
   HealthStatus,
-} from 'xmem-ai/types';
+} from 'xmem-ai';
 
 export type { SourceRecord, IngestResult, RetrieveResult, SearchResult, HealthStatus };
 
