@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>XMem Settings</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      width: 360px;
+      background: #0f0f11;
+      color: #e4e4e7;
+      padding: 0;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #27272a;
+    }
+    .header-icon {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, #7c3aed, #3b82f6);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700; color: white;
+    }
+    .header-text h1 { font-size: 16px; font-weight: 600; color: #fff; }
+    .header-text p { font-size: 11px; color: #a1a1aa; margin-top: 2px; }
+
+    .status-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 20px;
+      background: #18181b;
+      border-bottom: 1px solid #27272a;
+      font-size: 12px;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.online { background: #22c55e; box-shadow: 0 0 6px #22c55e80; }
+    .status-dot.offline { background: #ef4444; box-shadow: 0 0 6px #ef444480; }
+    .status-dot.checking { background: #f59e0b; animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { opacity: 0.4; } }
+
+    .body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+    .field label {
+      display: block; font-size: 12px; font-weight: 500;
+      color: #a1a1aa; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .field input, .field select {
+      width: 100%; padding: 10px 12px;
+      background: #1e1e24; border: 1px solid #333; border-radius: 8px;
+      color: #e4e4e7; font-size: 13px;
+      transition: border-color 0.2s;
+    }
+    .field input:focus, .field select:focus {
+      outline: none; border-color: #7c3aed;
+    }
+    .field input::placeholder { color: #52525b; }
+
+    .toggle-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 0;
+    }
+    .toggle-row .label-group { display: flex; flex-direction: column; gap: 2px; }
+    .toggle-row .label-group span:first-child { font-size: 13px; font-weight: 500; }
+    .toggle-row .label-group span:last-child { font-size: 11px; color: #71717a; }
+
+    .toggle {
+      position: relative; width: 40px; height: 22px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #333; border-radius: 22px; transition: 0.3s;
+    }
+    .toggle .slider::before {
+      content: ''; position: absolute; width: 16px; height: 16px;
+      left: 3px; bottom: 3px; background: white;
+      border-radius: 50%; transition: 0.3s;
+    }
+    .toggle input:checked + .slider { background: #7c3aed; }
+    .toggle input:checked + .slider::before { transform: translateX(18px); }
+
+    .actions { display: flex; gap: 8px; padding-top: 4px; }
+    .btn {
+      flex: 1; padding: 10px; border: none; border-radius: 8px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #6d28d9);
+      color: white;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-secondary {
+      background: #27272a; color: #e4e4e7;
+    }
+    .btn-secondary:hover { background: #333; }
+
+    .save-msg {
+      text-align: center; font-size: 12px;
+      padding: 8px; border-radius: 6px; display: none;
+    }
+    .save-msg.success { display: block; background: #22c55e15; color: #22c55e; border: 1px solid #22c55e30; }
+    .save-msg.error { display: block; background: #ef444415; color: #ef4444; border: 1px solid #ef444430; }
+
+    .footer {
+      padding: 12px 20px;
+      border-top: 1px solid #27272a;
+      text-align: center;
+      font-size: 11px; color: #52525b;
+    }
+    .footer kbd {
+      background: #27272a; padding: 2px 6px; border-radius: 4px;
+      font-family: inherit; font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-icon">X</div>
+    <div class="header-text">
+      <h1>XMem</h1>
+      <p>Intelligent Memory for AI</p>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <div id="statusDot" class="status-dot checking"></div>
+    <span id="statusText">Checking connection...</span>
+  </div>
+
+  <div class="body">
+    <div class="field">
+      <label>API Server URL</label>
+      <input type="url" id="apiUrl" placeholder="http://localhost:8000" />
+    </div>
+
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" id="apiKey" placeholder="Enter your XMem API key" />
+    </div>
+
+    <div class="field">
+      <label>User ID</label>
+      <input type="text" id="userId" placeholder="chrome-extension-user" />
+    </div>
+
+    <div class="toggle-row">
+      <div class="label-group">
+        <span>Memory Active</span>
+        <span>Auto-save & suggest memories</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="enableToggle" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="toggle-row">
+      <div class="label-group">
+        <span>Live Suggestions</span>
+        <span>Show memories as you type</span>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="liveToggle" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="saveBtn">Save Settings</button>
+      <button class="btn btn-secondary" id="testBtn">Test</button>
+    </div>
+
+    <div id="saveMsg" class="save-msg"></div>
+  </div>
+
+  <div class="footer">
+    Toggle sidebar: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd>
+  </div>
+
+  <script type="module" src="/src/popup.ts"></script>
+</body>
+</html>

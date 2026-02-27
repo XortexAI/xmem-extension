@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head><title>Generate XMem Icons</title></head>
+<body>
+<canvas id="c16" width="16" height="16"></canvas>
+<canvas id="c48" width="48" height="48"></canvas>
+<canvas id="c128" width="128" height="128"></canvas>
+<script>
+function drawIcon(canvas) {
+  const ctx = canvas.getContext('2d');
+  const s = canvas.width;
+  const r = s * 0.15;
+
+  // Background gradient
+  const bg = ctx.createLinearGradient(0, 0, s, s);
+  bg.addColorStop(0, '#7c3aed');
+  bg.addColorStop(1, '#3b82f6');
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.lineTo(s - r, 0);
+  ctx.quadraticCurveTo(s, 0, s, r);
+  ctx.lineTo(s, s - r);
+  ctx.quadraticCurveTo(s, s, s - r, s);
+  ctx.lineTo(r, s);
+  ctx.quadraticCurveTo(0, s, 0, s - r);
+  ctx.lineTo(0, r);
+  ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.fillStyle = bg;
+  ctx.fill();
+
+  // "X" letter
+  ctx.fillStyle = 'white';
+  ctx.font = `bold ${s * 0.55}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('X', s / 2, s / 2 + s * 0.02);
+}
+
+[16, 48, 128].forEach(size => {
+  const c = document.getElementById('c' + size);
+  drawIcon(c);
+  const link = document.createElement('a');
+  link.download = 'icon' + size + '.png';
+  link.href = c.toDataURL();
+  link.textContent = 'Download icon' + size + '.png';
+  document.body.appendChild(link);
+  document.body.appendChild(document.createElement('br'));
+});
+</script>
+</body>
+</html>
