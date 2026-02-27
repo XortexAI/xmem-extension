@@ -5,39 +5,48 @@
     "src": "../../../../../../@crx/manifest",
     "isEntry": true
   },
-  "_api-CPTTBvTz.js": {
-    "file": "assets/api-CPTTBvTz.js",
-    "name": "api"
+  "_api-ByenUXdy.js": {
+    "file": "assets/api-ByenUXdy.js",
+    "name": "api",
+    "imports": [
+      "_client-7OjknBaG.js"
+    ]
   },
-  "_content.ts-loader-DmWx1doj.js": {
-    "file": "assets/content.ts-loader-DmWx1doj.js",
-    "src": "_content.ts-loader-DmWx1doj.js"
+  "_client-7OjknBaG.js": {
+    "file": "assets/client-7OjknBaG.js",
+    "name": "client"
+  },
+  "_content.ts-loader-DKIfQ5O5.js": {
+    "file": "assets/content.ts-loader-DKIfQ5O5.js",
+    "src": "_content.ts-loader-DKIfQ5O5.js"
   },
   "src/background.ts": {
-    "file": "assets/background.ts-CumN-gRW.js",
+    "file": "assets/background.ts-HNT3WBSo.js",
     "name": "background.ts",
     "src": "src/background.ts",
     "isEntry": true,
     "imports": [
-      "_api-CPTTBvTz.js"
+      "_client-7OjknBaG.js"
     ]
   },
   "src/content.ts": {
-    "file": "assets/content.ts-CD3v2vzE.js",
+    "file": "assets/content.ts-DCy5iPuz.js",
     "name": "content.ts",
     "src": "src/content.ts",
     "isEntry": true,
     "imports": [
-      "_api-CPTTBvTz.js"
+      "_api-ByenUXdy.js",
+      "_client-7OjknBaG.js"
     ]
   },
   "src/popup.html": {
-    "file": "assets/popup.html-DL5iUror.js",
+    "file": "assets/popup.html-BvoWkGJV.js",
     "name": "popup.html",
     "src": "src/popup.html",
     "isEntry": true,
     "imports": [
-      "_api-CPTTBvTz.js"
+      "_api-ByenUXdy.js",
+      "_client-7OjknBaG.js"
     ]
   }
 }
