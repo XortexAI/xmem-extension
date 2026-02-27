@@ -1,0 +1,21 @@
+{
+  "name": "xmem-extension",
+  "version": "1.0.0",
+  "description": "XMem Chrome Extension — real-time memory recall for AI conversations",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "xmem-ai": "file:../sdk/xmem-ts"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.2.0",
+    "chrome-types": "^0.1.375",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  }
+}
