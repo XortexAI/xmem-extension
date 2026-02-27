@@ -10,7 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "xmem-ai": "file:../sdk/xmem-ts"
+    "xmem-ai": "file:../xmem-sdk/xmem-ts"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.2.0",

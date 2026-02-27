@@ -32,7 +32,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/content.ts-loader-DKIfQ5O5.js"
+        "assets/content.ts-loader-CBtX0uk8.js"
       ],
       "matches": [
         "<all_urls>"
@@ -47,9 +47,9 @@
       ],
       "resources": [
         "icons/*",
-        "assets/api-ByenUXdy.js",
-        "assets/client-7OjknBaG.js",
-        "assets/content.ts-DCy5iPuz.js"
+        "assets/api-p6G4S2WE.js",
+        "assets/client-DRFp1_ow.js",
+        "assets/content.ts-BtzBYDCo.js"
       ],
       "use_dynamic_url": false
     }
