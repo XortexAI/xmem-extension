@@ -32,10 +32,15 @@
   "content_scripts": [
     {
       "js": [
-        "assets/content.ts-loader-CBtX0uk8.js"
+        "assets/content.ts-loader-BSZt_JIc.js"
       ],
       "matches": [
-        "<all_urls>"
+        "*://chatgpt.com/*",
+        "*://chat.openai.com/*",
+        "*://claude.ai/*",
+        "*://gemini.google.com/*",
+        "*://www.perplexity.ai/*",
+        "*://perplexity.ai/*"
       ],
       "run_at": "document_idle"
     }
@@ -46,10 +51,23 @@
         "<all_urls>"
       ],
       "resources": [
-        "icons/*",
-        "assets/api-p6G4S2WE.js",
-        "assets/client-DRFp1_ow.js",
-        "assets/content.ts-BtzBYDCo.js"
+        "icons/*"
+      ],
+      "use_dynamic_url": false
+    },
+    {
+      "matches": [
+        "*://chat.openai.com/*",
+        "*://chatgpt.com/*",
+        "*://claude.ai/*",
+        "*://gemini.google.com/*",
+        "*://perplexity.ai/*",
+        "*://www.perplexity.ai/*"
+      ],
+      "resources": [
+        "assets/api-BS1XDhWz.js",
+        "assets/client-7OjknBaG.js",
+        "assets/content.ts-BjQPobVW.js"
       ],
       "use_dynamic_url": false
     }
