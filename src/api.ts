@@ -73,67 +73,118 @@ async function getClient(): Promise<{ client: XMemClient; userId: string }> {
   return { client: _cachedClient, userId: config.userId };
 }
 
+// ─── API Request Queue ──────────────────────────────────────────────────────
+
+/**
+ * The XMem backend (LangGraph) can throw INVALID_CONCURRENT_GRAPH_UPDATE if multiple 
+ * requests modify the same user's thread graph state at exactly the same time.
+ * We queue all requests to ensure they process sequentially.
+ */
+class RequestQueue {
+  private queue: (() => Promise<void>)[] = [];
+  private isProcessing = false;
+
+  async enqueue<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          const res = await task();
+          resolve(res);
+        } catch (err) {
+          reject(err);
+        }
+      });
+      if (!this.isProcessing) {
+        this.processQueue();
+      }
+    });
+  }
+
+  private async processQueue() {
+    this.isProcessing = true;
+    while (this.queue.length > 0) {
+      const task = this.queue.shift();
+      if (task) {
+        try {
+          await task();
+        } catch (e) {
+          console.error("Queue task failed", e);
+        }
+      }
+    }
+    this.isProcessing = false;
+  }
+}
+
+const apiQueue = new RequestQueue();
+
 // ─── Public API Functions ─────────────────────────────────────────────────
 
 export async function ingestMemory(
   text: string,
   agentResponse: string = '',
 ): Promise<IngestResult> {
-  const { client, userId } = await getClient();
-  console.log('[XMem] Ingesting memory for user:', userId);
-  try {
-    const result = await client.ingest({
-      user_query: text,
-      agent_response: agentResponse,
-      user_id: userId,
-    });
-    console.log('[XMem] Ingest result:', result);
-    return result;
-  } catch (err) {
-    console.error('[XMem] Ingest error:', err);
-    throw err;
-  }
+  return apiQueue.enqueue(async () => {
+    const { client, userId } = await getClient();
+    console.log('[XMem] Ingesting memory for user:', userId);
+    try {
+      const result = await client.ingest({
+        user_query: text,
+        agent_response: agentResponse,
+        user_id: userId,
+      });
+      console.log('[XMem] Ingest result:', result);
+      return result;
+    } catch (err) {
+      console.error('[XMem] Ingest error:', err);
+      throw err;
+    }
+  });
 }
 
 export async function searchMemories(
   query: string,
   opts: { domains?: string[]; topK?: number } = {},
 ): Promise<SourceRecord[]> {
-  const { client, userId } = await getClient();
-  console.log('[XMem] Searching memories for user:', userId, 'query:', query.slice(0, 50));
-  try {
-    const result = await client.search({
-      query,
-      user_id: userId,
-      domains: opts.domains || ['profile', 'temporal', 'summary'],
-      top_k: opts.topK || 10,
-    });
-    console.log('[XMem] Search returned', result.results?.length || 0, 'results');
-    return result.results;
-  } catch (err) {
-    console.error('[XMem] Search error:', err);
-    throw err;
-  }
+  return apiQueue.enqueue(async () => {
+    const { client, userId } = await getClient();
+    console.log('[XMem] Searching memories for user:', userId, 'query:', query.slice(0, 50));
+    try {
+      const result = await client.search({
+        query,
+        user_id: userId,
+        domains: opts.domains || ['profile', 'temporal', 'summary'],
+        top_k: opts.topK || 10,
+      });
+      console.log('[XMem] Search returned', result.results?.length || 0, 'results');
+      return result.results;
+    } catch (err) {
+      console.error('[XMem] Search error:', err);
+      throw err;
+    }
+  });
 }
 
 export async function retrieveAnswer(
   query: string,
   opts: { topK?: number } = {},
 ): Promise<RetrieveResult> {
-  const { client, userId } = await getClient();
-  console.log('[XMem] Retrieving answer for user:', userId, 'query:', query.slice(0, 50));
-  try {
-    const result = await client.retrieve({
-      query,
-      user_id: userId,
-      top_k: opts.topK || 5,
-    });
-    console.log('[XMem] Retrieve result:', result.answer?.slice(0, 100));
-    return result;
-  } catch (err) {
-    console.error('[XMem] Retrieve error:', err);
-    throw err;
-  }
+  return apiQueue.enqueue(async () => {
+    const { client, userId } = await getClient();
+    console.log('[XMem] Retrieving answer for user:', userId, 'query:', query.slice(0, 50));
+    try {
+      const result = await client.retrieve({
+        query,
+        user_id: userId,
+        top_k: opts.topK || 5,
+      });
+      console.log('[XMem] Retrieve result:', result.answer?.slice(0, 100));
+      return result;
+    } catch (err) {
+      console.error('[XMem] Retrieve error:', err);
+      throw err;
+    }
+  });
 }
 
 export async function checkHealth(): Promise<boolean> {

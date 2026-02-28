@@ -10,12 +10,13 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "xmem-ai": "file:../xmem-sdk/xmem-ts"
+    "xmem-ai": "file:../sdk/xmem-ts"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.2.0",
     "chrome-types": "^0.1.375",
+    "es-module-lexer": "^2.0.0",
     "typescript": "^5.9.2",
-    "vite": "^7.1.4"
+    "vite": "^5.4.21"
   }
 }
