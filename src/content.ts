@@ -7,7 +7,13 @@
  * full memory sidebar.
  */
 
-import { retrieveAnswer, searchMemories, ingestMemory, type SourceRecord } from './api';
+import {
+  retrieveAnswer,
+  searchMemories,
+  ingestMemory,
+  type SourceRecord,
+  type RetrieveResult,
+} from "./api";
 
 // ─── Config ───────────────────────────────────────────────────────────────
 
@@ -19,26 +25,32 @@ const MIN_RELEVANCE_SCORE = 0.4;
 // ─── State ────────────────────────────────────────────────────────────────
 
 let ghostEl: HTMLElement | null = null;
-let ghostAnswer = '';
+let ghostAnswer = "";
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let inflightReq: { cancelled: boolean } | null = null;
-let prevQueryText = '';
-let savedInputText = '';
+let prevQueryText = "";
+let savedInputText = "";
 
 let sidebarOpen = false;
 let sidebarEl: HTMLElement | null = null;
 let chipEl: HTMLElement | null = null;
 let cachedResults: SourceRecord[] = [];
 
+// ─── Mode Toggle State ───────────────────────────────────────────────────
+
+type XMemMode = "ingest" | "search";
+let xmemMode: XMemMode = "search";
+let modeToggleEl: HTMLElement | null = null;
+
 // ─── Editor Detection ─────────────────────────────────────────────────────
 
 const EDITOR_SELECTORS = [
-  '#prompt-textarea',
+  "#prompt-textarea",
   'div.ProseMirror[contenteditable="true"]',
   'div[contenteditable="true"]',
-  'textarea[placeholder]',
-  'rich-textarea textarea',
-  'textarea',
+  "textarea[placeholder]",
+  "rich-textarea textarea",
+  "textarea",
 ];
 
 function findEditor(): HTMLElement | null {
@@ -50,7 +62,7 @@ function findEditor(): HTMLElement | null {
 }
 
 function readEditorText(el: HTMLElement): string {
-  return el instanceof HTMLTextAreaElement ? el.value : el.textContent ?? '';
+  return el instanceof HTMLTextAreaElement ? el.value : (el.textContent ?? "");
 }
 
 function isCursorAtEnd(el: HTMLElement): boolean {
@@ -67,10 +79,16 @@ function isCursorAtEnd(el: HTMLElement): boolean {
 
 // ─── Caret Position ───────────────────────────────────────────────────────
 
-interface CaretXY { x: number; y: number; h: number }
+interface CaretXY {
+  x: number;
+  y: number;
+  h: number;
+}
 
 function getCaretXY(el: HTMLElement): CaretXY | null {
-  return el instanceof HTMLTextAreaElement ? textareaCaretXY(el) : contentEditableCaretXY(el);
+  return el instanceof HTMLTextAreaElement
+    ? textareaCaretXY(el)
+    : contentEditableCaretXY(el);
 }
 
 function contentEditableCaretXY(el: HTMLElement): CaretXY | null {
@@ -95,29 +113,43 @@ function contentEditableCaretXY(el: HTMLElement): CaretXY | null {
 
 function textareaCaretXY(ta: HTMLTextAreaElement): CaretXY | null {
   const cs = getComputedStyle(ta);
-  const mirror = document.createElement('div');
+  const mirror = document.createElement("div");
 
   const props = [
-    'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
-    'letter-spacing', 'word-spacing', 'text-indent', 'overflow-wrap',
-    'word-break', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
-    'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
-    'box-sizing',
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "line-height",
+    "letter-spacing",
+    "word-spacing",
+    "text-indent",
+    "overflow-wrap",
+    "word-break",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "box-sizing",
   ];
   for (const p of props) mirror.style.setProperty(p, cs.getPropertyValue(p));
 
-  mirror.style.position = 'absolute';
-  mirror.style.top = '-9999px';
-  mirror.style.left = '-9999px';
+  mirror.style.position = "absolute";
+  mirror.style.top = "-9999px";
+  mirror.style.left = "-9999px";
   mirror.style.width = `${ta.clientWidth}px`;
-  mirror.style.whiteSpace = 'pre-wrap';
-  mirror.style.wordWrap = 'break-word';
-  mirror.style.overflow = 'hidden';
-  mirror.style.visibility = 'hidden';
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.wordWrap = "break-word";
+  mirror.style.overflow = "hidden";
+  mirror.style.visibility = "hidden";
 
   mirror.textContent = ta.value.substring(0, ta.selectionEnd);
-  const marker = document.createElement('span');
-  marker.textContent = '\u200b';
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
   mirror.appendChild(marker);
   document.body.appendChild(mirror);
 
@@ -128,7 +160,11 @@ function textareaCaretXY(ta: HTMLTextAreaElement): CaretXY | null {
   const borderT = parseFloat(cs.borderTopWidth) || 0;
 
   const result: CaretXY = {
-    x: taRect.left + borderL + (markerRect.left - mirrorRect.left) - ta.scrollLeft,
+    x:
+      taRect.left +
+      borderL +
+      (markerRect.left - mirrorRect.left) -
+      ta.scrollLeft,
     y: taRect.top + borderT + (markerRect.top - mirrorRect.top) - ta.scrollTop,
     h: parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4,
   };
@@ -143,7 +179,8 @@ function getElementBackground(el: HTMLElement | null): number[] | null {
   const bg = getComputedStyle(el).backgroundColor;
   const m = bg.match(/\d+/g);
   if (!m) return getElementBackground(el.parentElement);
-  if (m.length >= 4 && parseFloat(m[3]) === 0) return getElementBackground(el.parentElement); // transparent
+  if (m.length >= 4 && parseFloat(m[3]) === 0)
+    return getElementBackground(el.parentElement); // transparent
   return [+m[0], +m[1], +m[2]];
 }
 
@@ -158,9 +195,11 @@ function isDarkBackground(el: HTMLElement): boolean {
 function ensureChip(anchor: HTMLElement): HTMLElement {
   if (chipEl && document.body.contains(chipEl)) return chipEl;
 
-  chipEl = document.createElement('div');
-  chipEl.id = 'xmem-chip';
-  chipEl.className = isDarkBackground(anchor) ? 'xmem-dark-theme' : 'xmem-light-theme';
+  chipEl = document.createElement("div");
+  chipEl.id = "xmem-chip";
+  chipEl.className = isDarkBackground(anchor)
+    ? "xmem-dark-theme"
+    : "xmem-light-theme";
   chipEl.innerHTML = `
     <div class="xmem-chip-inner">
       <span class="xmem-chip-icon">
@@ -175,7 +214,7 @@ function ensureChip(anchor: HTMLElement): HTMLElement {
   `;
   document.body.appendChild(chipEl);
   positionChip(anchor);
-  chipEl.addEventListener('click', (e) => {
+  chipEl.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleSidebar();
   });
@@ -186,63 +225,74 @@ function ensureChip(anchor: HTMLElement): HTMLElement {
 function positionChip(anchor: HTMLElement) {
   if (!chipEl) return;
   const rect = anchor.getBoundingClientRect();
-  chipEl.style.position = 'fixed';
+  chipEl.style.position = "fixed";
   chipEl.style.top = `${rect.top - 36}px`;
   chipEl.style.left = `${rect.right - 120}px`;
-  chipEl.style.zIndex = '2147483647';
+  chipEl.style.zIndex = "2147483647";
 }
 
 function updateChip(count: number, loading = false) {
   if (!chipEl) return;
-  const countEl = chipEl.querySelector('.xmem-chip-count');
-  const labelEl = chipEl.querySelector('.xmem-chip-label');
-  const inner = chipEl.querySelector('.xmem-chip-inner') as HTMLElement;
+  const countEl = chipEl.querySelector(".xmem-chip-count");
+  const labelEl = chipEl.querySelector(".xmem-chip-label");
+  const inner = chipEl.querySelector(".xmem-chip-inner") as HTMLElement;
 
-  if (countEl) countEl.textContent = loading ? '...' : String(count);
-  if (labelEl) labelEl.textContent = loading ? 'searching' : (count === 1 ? 'memory' : 'memories');
+  if (countEl) countEl.textContent = loading ? "..." : String(count);
+  if (labelEl)
+    labelEl.textContent = loading
+      ? "searching"
+      : count === 1
+        ? "memory"
+        : "memories";
   if (inner) {
-    inner.classList.toggle('xmem-chip-active', count > 0 || loading);
-    inner.classList.toggle('xmem-chip-loading', loading);
+    inner.classList.toggle("xmem-chip-active", count > 0 || loading);
+    inner.classList.toggle("xmem-chip-loading", loading);
   }
 }
 
 function hideChip() {
-  if (chipEl) chipEl.style.display = 'none';
+  if (chipEl) chipEl.style.display = "none";
 }
 
 function showChip() {
-  if (chipEl) chipEl.style.display = 'block';
+  if (chipEl) chipEl.style.display = "block";
 }
 
 // ─── Ghost Text Rendering ─────────────────────────────────────────────────
 
-function showGhost(answer: string, caret: CaretXY, editorRect: DOMRect, editor: HTMLElement) {
+function showGhost(
+  answer: string,
+  caret: CaretXY,
+  editorRect: DOMRect,
+  editor: HTMLElement,
+) {
   dismissGhost();
   ghostAnswer = answer;
-  const display = answer.length > MAX_GHOST_CHARS
-    ? answer.slice(0, MAX_GHOST_CHARS).trimEnd() + '…'
-    : answer;
+  const display =
+    answer.length > MAX_GHOST_CHARS
+      ? answer.slice(0, MAX_GHOST_CHARS).trimEnd() + "…"
+      : answer;
 
-  ghostEl = document.createElement('div');
-  ghostEl.className = `xmem-ghost ${isDarkBackground(editor) ? 'xmem-dark' : 'xmem-light'}`;
+  ghostEl = document.createElement("div");
+  ghostEl.className = `xmem-ghost ${isDarkBackground(editor) ? "xmem-dark" : "xmem-light"}`;
 
-  const textSpan = document.createElement('span');
-  textSpan.className = 'xmem-ghost-text';
+  const textSpan = document.createElement("span");
+  textSpan.className = "xmem-ghost-text";
   textSpan.textContent = `  ${display}`;
   ghostEl.appendChild(textSpan);
 
-  const tabBadge = document.createElement('span');
-  tabBadge.className = 'xmem-ghost-tab';
-  tabBadge.textContent = 'Tab';
+  const tabBadge = document.createElement("span");
+  tabBadge.className = "xmem-ghost-tab";
+  tabBadge.textContent = "Tab";
   ghostEl.appendChild(tabBadge);
 
   const cs = getComputedStyle(editor);
   ghostEl.style.fontFamily = cs.fontFamily;
   ghostEl.style.fontSize = cs.fontSize;
   ghostEl.style.lineHeight = `${caret.h}px`;
-  ghostEl.style.position = 'fixed';
-  ghostEl.style.zIndex = '2147483647';
-  ghostEl.style.pointerEvents = 'none';
+  ghostEl.style.position = "fixed";
+  ghostEl.style.zIndex = "2147483647";
+  ghostEl.style.pointerEvents = "none";
 
   const spaceRight = editorRect.right - caret.x - 16;
   if (spaceRight > 100) {
@@ -263,23 +313,23 @@ function showGhost(answer: string, caret: CaretXY, editorRect: DOMRect, editor: 
 
 function showLoadingGhost(caret: CaretXY, editor: HTMLElement) {
   dismissGhost();
-  ghostEl = document.createElement('div');
-  ghostEl.className = `xmem-ghost xmem-ghost-loading ${isDarkBackground(editor) ? 'xmem-dark' : 'xmem-light'}`;
+  ghostEl = document.createElement("div");
+  ghostEl.className = `xmem-ghost xmem-ghost-loading ${isDarkBackground(editor) ? "xmem-dark" : "xmem-light"}`;
 
-  const dots = document.createElement('span');
-  dots.className = 'xmem-ghost-dots';
-  dots.textContent = '  ···';
+  const dots = document.createElement("span");
+  dots.className = "xmem-ghost-dots";
+  dots.textContent = "  ···";
   ghostEl.appendChild(dots);
 
   const cs = getComputedStyle(editor);
   ghostEl.style.fontFamily = cs.fontFamily;
   ghostEl.style.fontSize = cs.fontSize;
   ghostEl.style.lineHeight = `${caret.h}px`;
-  ghostEl.style.position = 'fixed';
+  ghostEl.style.position = "fixed";
   ghostEl.style.left = `${caret.x}px`;
   ghostEl.style.top = `${caret.y}px`;
-  ghostEl.style.zIndex = '2147483647';
-  ghostEl.style.pointerEvents = 'none';
+  ghostEl.style.zIndex = "2147483647";
+  ghostEl.style.pointerEvents = "none";
 
   document.body.appendChild(ghostEl);
 }
@@ -287,7 +337,7 @@ function showLoadingGhost(caret: CaretXY, editor: HTMLElement) {
 function dismissGhost() {
   ghostEl?.remove();
   ghostEl = null;
-  ghostAnswer = '';
+  ghostAnswer = "";
 }
 
 function acceptGhost(): boolean {
@@ -297,28 +347,34 @@ function acceptGhost(): boolean {
 
   insertTextIntoEditor(editor, `\n${ghostAnswer}`);
   dismissGhost();
-  showToast('Memory context added');
+  showToast("Memory context added");
   return true;
 }
 
 function insertTextIntoEditor(el: HTMLElement, text: string) {
   if (el instanceof HTMLTextAreaElement) {
-    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
     const pos = el.selectionEnd;
     const newVal = el.value.slice(0, pos) + text + el.value.slice(pos);
     if (nativeSetter) nativeSetter.call(el, newVal);
     else el.value = newVal;
     el.selectionStart = el.selectionEnd = pos + text.length;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   } else {
     el.focus();
-    document.execCommand('insertText', false, text);
+    document.execCommand("insertText", false, text);
   }
 }
 
 // ─── Autocomplete Engine ──────────────────────────────────────────────────
 
 async function runAutocomplete(queryText: string) {
+  // Only run autocomplete in search mode
+  if (xmemMode !== "search") return;
+
   if (queryText === prevQueryText) return;
   prevQueryText = queryText;
 
@@ -355,13 +411,22 @@ async function runAutocomplete(queryText: string) {
     }
 
     const ed = findEditor();
-    if (!ed || !isCursorAtEnd(ed)) { dismissGhost(); return; }
+    if (!ed || !isCursorAtEnd(ed)) {
+      dismissGhost();
+      return;
+    }
 
     const caret = getCaretXY(ed);
-    if (!caret) { dismissGhost(); return; }
+    if (!caret) {
+      dismissGhost();
+      return;
+    }
 
     const edRect = ed.getBoundingClientRect();
-    if (caret.y < edRect.top - 5 || caret.y > edRect.bottom + 5) { dismissGhost(); return; }
+    if (caret.y < edRect.top - 5 || caret.y > edRect.bottom + 5) {
+      dismissGhost();
+      return;
+    }
 
     showGhost(resp.answer, caret, edRect, ed);
   } catch {
@@ -375,7 +440,7 @@ async function runAutocomplete(queryText: string) {
 function hookSendButtons() {
   const sendSelectors = [
     'button[data-testid="send-button"]',
-    '#composer-submit-button',
+    "#composer-submit-button",
     'button[aria-label="Send Message"]',
     'button[aria-label="Send message"]',
     'button[type="submit"]',
@@ -383,18 +448,25 @@ function hookSendButtons() {
   for (const sel of sendSelectors) {
     const btn = document.querySelector<HTMLButtonElement>(sel);
     if (btn && !btn.dataset.xmemHooked) {
-      btn.dataset.xmemHooked = '1';
-      btn.addEventListener('click', () => { dismissGhost(); saveConversation(); }, true);
+      btn.dataset.xmemHooked = "1";
+      btn.addEventListener(
+        "click",
+        () => {
+          dismissGhost();
+          saveConversation();
+        },
+        true,
+      );
     }
   }
 }
 
 function hookEnterKey(editor: HTMLElement) {
   if (editor.dataset.xmemEnterHooked) return;
-  editor.dataset.xmemEnterHooked = '1';
-  editor.addEventListener('keydown', (e: Event) => {
+  editor.dataset.xmemEnterHooked = "1";
+  editor.addEventListener("keydown", (e: Event) => {
     const ke = e as KeyboardEvent;
-    if (ke.key === 'Enter' && !ke.shiftKey) {
+    if (ke.key === "Enter" && !ke.shiftKey) {
       savedInputText = readEditorText(editor);
       dismissGhost();
       setTimeout(saveConversation, 100);
@@ -402,34 +474,119 @@ function hookEnterKey(editor: HTMLElement) {
   });
 }
 
+// ─── Ingest Status Banner ─────────────────────────────────────────────────
+
+function showIngestStatus(
+  status: "pending" | "success" | "error",
+): HTMLElement | null {
+  // Remove any previous ingest status
+  document.querySelectorAll(".xmem-ingest-status").forEach((el) => el.remove());
+
+  const banner = document.createElement("div");
+  banner.className = `xmem-ingest-status xmem-ingest-${status}`;
+
+  if (status === "pending") {
+    banner.innerHTML = `
+      <div class="xmem-ingest-spinner"></div>
+      <span>Memorizing conversation…</span>
+    `;
+  }
+
+  document.body.appendChild(banner);
+  requestAnimationFrame(() => banner.classList.add("xmem-status-visible"));
+
+  return banner;
+}
+
+function updateIngestStatus(el: HTMLElement, status: "success" | "error") {
+  el.className = `xmem-ingest-status xmem-ingest-${status} xmem-status-visible`;
+
+  if (status === "success") {
+    el.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+      <span>Conversation committed to memory</span>
+    `;
+  } else {
+    el.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+      <span>Memory save failed — will retry next turn</span>
+    `;
+  }
+
+  // Auto-remove after a few seconds
+  setTimeout(
+    () => {
+      el.classList.remove("xmem-status-visible");
+      setTimeout(() => el.remove(), 400);
+    },
+    status === "success" ? 3000 : 5000,
+  );
+}
+
 async function saveConversation() {
-  const enabled = await new Promise<boolean>(resolve => {
+  const enabled = await new Promise<boolean>((resolve) => {
     if (!chrome?.storage?.sync) return resolve(false);
-    chrome.storage.sync.get(['xmem_enabled'], d => resolve(d.xmem_enabled !== false))
+    chrome.storage.sync.get(["xmem_enabled"], (d) =>
+      resolve(d.xmem_enabled !== false),
+    );
   });
   if (!enabled) return;
 
   const editor = findEditor();
-  const raw = savedInputText || (editor ? readEditorText(editor) : '');
-  const cleaned = raw.replace(/<[^>]+>/g, '').trim();
+  const raw = savedInputText || (editor ? readEditorText(editor) : "");
+  const cleaned = raw.replace(/<[^>]+>/g, "").trim();
   if (cleaned.length < 5) return;
 
   // 1. Trigger sidecar response
   triggerSidecar(cleaned);
 
-  // 2. Save memory
-  try { await ingestMemory(cleaned); }
-  catch (err) { console.error('XMem: save failed', err); }
-  savedInputText = '';
+  // 2. Capture the latest agent (assistant) response from the page
+  const agentResponse = await captureLatestAgentResponse();
+
+  // 3. Save memory (user query + agent response)
+  const statusEl = xmemMode === "ingest" ? showIngestStatus("pending") : null;
+  try {
+    await ingestMemory(cleaned, agentResponse);
+    if (statusEl) updateIngestStatus(statusEl, "success");
+  } catch (err) {
+    console.error("XMem: save failed", err);
+    if (statusEl) updateIngestStatus(statusEl, "error");
+  }
+  savedInputText = "";
+}
+
+async function captureLatestAgentResponse(): Promise<string> {
+  // Wait briefly for the AI to start responding
+  await new Promise((r) => setTimeout(r, 2000));
+
+  const responseNodes = document.querySelectorAll<HTMLElement>(
+    '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
+  );
+
+  if (responseNodes.length === 0) return "";
+
+  // Get the last (most recent) assistant response
+  const lastNode = responseNodes[responseNodes.length - 1];
+  const text = lastNode.textContent?.trim() || "";
+
+  // Return a reasonable chunk (cap at 2000 chars to avoid bloat)
+  return text.length > 2000 ? text.substring(0, 2000) : text;
 }
 
 // ─── Memory Sidecar ───────────────────────────────────────────────────────
 
 let activeSidecar: HTMLElement | null = null;
 let sidecarTarget: HTMLElement | null = null;
-let currentSidecarQuery = '';
+let currentSidecarQuery = "";
 
 async function triggerSidecar(query: string) {
+  // Only show sidecar in search mode
+  if (xmemMode !== "search") return;
+
   if (query === currentSidecarQuery) return;
   currentSidecarQuery = query;
 
@@ -458,14 +615,14 @@ async function pollForLatestAssistantMessage(): Promise<HTMLElement | null> {
   // Poll for up to 10 seconds to find the newly generated AI response container
   for (let i = 0; i < 20; i++) {
     const nodes = document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose'
+      '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
     );
     if (nodes.length > 0) {
       // Find the last one (the most recent response)
       const last = nodes[nodes.length - 1];
       if (last.getBoundingClientRect().height > 0) return last;
     }
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 500));
   }
   return null;
 }
@@ -474,12 +631,12 @@ function renderSidecar(target: HTMLElement, resp: RetrieveResult) {
   if (activeSidecar) activeSidecar.remove();
   sidecarTarget = target;
 
-  activeSidecar = document.createElement('div');
-  activeSidecar.className = `xmem-sidecar ${isDarkBackground(document.body) ? 'xmem-dark-theme' : 'xmem-light-theme'}`;
-  
-  const sourcesHtml = resp.sources?.length 
-    ? `<div class="xmem-sidecar-sources">${resp.sources.length} sources used</div>` 
-    : '';
+  activeSidecar = document.createElement("div");
+  activeSidecar.className = `xmem-sidecar ${isDarkBackground(document.body) ? "xmem-dark-theme" : "xmem-light-theme"}`;
+
+  const sourcesHtml = resp.sources?.length
+    ? `<div class="xmem-sidecar-sources">${resp.sources.length} sources used</div>`
+    : "";
 
   activeSidecar.innerHTML = `
     <div class="xmem-sidecar-header">
@@ -495,11 +652,13 @@ function renderSidecar(target: HTMLElement, resp: RetrieveResult) {
 
   document.body.appendChild(activeSidecar);
 
-  activeSidecar.querySelector('.xmem-sidecar-close')?.addEventListener('click', () => {
-    activeSidecar?.remove();
-    activeSidecar = null;
-    sidecarTarget = null;
-  });
+  activeSidecar
+    .querySelector(".xmem-sidecar-close")
+    ?.addEventListener("click", () => {
+      activeSidecar?.remove();
+      activeSidecar = null;
+      sidecarTarget = null;
+    });
 
   updateSidecarPosition();
 }
@@ -507,31 +666,31 @@ function renderSidecar(target: HTMLElement, resp: RetrieveResult) {
 function updateSidecarPosition() {
   if (!activeSidecar || !sidecarTarget) return;
   const rect = sidecarTarget.getBoundingClientRect();
-  
+
   if (rect.height === 0 || rect.width === 0) {
-    activeSidecar.style.display = 'none';
+    activeSidecar.style.display = "none";
     return;
   }
-  activeSidecar.style.display = 'flex';
+  activeSidecar.style.display = "flex";
 
   const spaceLeft = rect.left;
-  
+
   // Position on the left side (since left is cleaner for ChatGPT/Claude)
   if (spaceLeft > 320) {
     activeSidecar.style.top = `${Math.max(80, rect.top)}px`;
     activeSidecar.style.left = `${Math.max(10, rect.left - 320)}px`;
-    activeSidecar.style.width = '300px';
+    activeSidecar.style.width = "300px";
   } else {
     // If not enough space on left, try top-right corner of the bubble (overlapping safely)
     activeSidecar.style.top = `${Math.max(80, rect.top - 60)}px`;
     activeSidecar.style.left = `${Math.max(10, rect.right - 300)}px`;
-    activeSidecar.style.width = '280px';
+    activeSidecar.style.width = "280px";
   }
 }
 
 // Keep sidecar anchored during scrolling or streaming text
-window.addEventListener('scroll', updateSidecarPosition, true);
-window.addEventListener('resize', updateSidecarPosition);
+window.addEventListener("scroll", updateSidecarPosition, true);
+window.addEventListener("resize", updateSidecarPosition);
 setInterval(updateSidecarPosition, 200);
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────
@@ -539,51 +698,67 @@ setInterval(updateSidecarPosition, 200);
 function createSidebar(): HTMLElement {
   if (sidebarEl && document.body.contains(sidebarEl)) return sidebarEl;
 
-  sidebarEl = document.createElement('div');
-  sidebarEl.id = 'xmem-sidebar';
+  sidebarEl = document.createElement("div");
+  sidebarEl.id = "xmem-sidebar";
   sidebarEl.innerHTML = `
     <div class="xmem-sb-header">
       <div class="xmem-sb-logo">
-        <div class="xmem-sb-logo-icon">X</div>
+        <div class="xmem-sb-logo-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7l-3 3.5L9 16c-2-1.5-4-4-4-7a7 7 0 0 1 7-7z"/>
+            <circle cx="12" cy="9" r="2"/>
+          </svg>
+        </div>
         <span>XMem</span>
       </div>
-      <div class="xmem-sb-header-actions">
-        <button class="xmem-sb-btn" id="xmem-sb-save" title="Save current input as memory">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
-            <polyline points="17 21 17 13 7 13 7 21"/>
-            <polyline points="7 3 7 8 15 8"/>
-          </svg>
-        </button>
-        <button class="xmem-sb-btn" id="xmem-sb-close" title="Close sidebar">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
+      <button class="xmem-sb-close-btn" id="xmem-sb-close" title="Close">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="xmem-sb-controls">
+      <div class="xmem-sb-segmented">
+        <button class="xmem-sb-seg active" data-tab="memories">Memories</button>
+        <button class="xmem-sb-seg" data-tab="ask">Ask</button>
+        <div class="xmem-sb-seg-indicator"></div>
       </div>
     </div>
-    <div class="xmem-sb-tabs">
-      <button class="xmem-sb-tab active" data-tab="memories">Memories</button>
-      <button class="xmem-sb-tab" data-tab="ask">Ask Memory</button>
+
+    <div class="xmem-sb-search-wrap">
+      <div class="xmem-sb-search-bar">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="xmem-sb-search" placeholder="Search memories..." />
+      </div>
     </div>
-    <div class="xmem-sb-search-bar">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-      <input type="text" id="xmem-sb-search" placeholder="Search your memories..." />
-    </div>
+
+    <div class="xmem-sb-meta" id="xmem-sb-meta"></div>
+
     <div class="xmem-sb-content" id="xmem-sb-content">
       <div class="xmem-sb-panel active" id="xmem-panel-memories"></div>
       <div class="xmem-sb-panel" id="xmem-panel-ask">
         <div class="xmem-ask-container">
-          <textarea id="xmem-ask-input" placeholder="Ask a question and XMem will answer from your memories..." rows="3"></textarea>
-          <button class="xmem-ask-btn" id="xmem-ask-btn">Ask XMem</button>
+          <div class="xmem-ask-label">Ask your memories anything</div>
+          <textarea id="xmem-ask-input" placeholder="e.g. What's my work experience?" rows="3"></textarea>
+          <button class="xmem-ask-btn" id="xmem-ask-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+            Ask XMem
+          </button>
           <div id="xmem-ask-result" class="xmem-ask-result"></div>
         </div>
       </div>
     </div>
+
     <div class="xmem-sb-footer">
-      <span>Shortcut: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></span>
+      <div class="xmem-sb-footer-inner">
+        <span class="xmem-sb-footer-text">XMem v1.0</span>
+        <div class="xmem-sb-kbd"><kbd>⌃</kbd><kbd>⇧</kbd><kbd>M</kbd></div>
+      </div>
     </div>
   `;
 
@@ -593,85 +768,174 @@ function createSidebar(): HTMLElement {
 }
 
 function setupSidebarEvents(sidebar: HTMLElement) {
-  sidebar.querySelector('#xmem-sb-close')?.addEventListener('click', () => toggleSidebar());
+  sidebar
+    .querySelector("#xmem-sb-close")
+    ?.addEventListener("click", () => toggleSidebar());
 
-  sidebar.querySelectorAll<HTMLElement>('.xmem-sb-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      sidebar.querySelectorAll('.xmem-sb-tab').forEach(t => t.classList.remove('active'));
-      sidebar.querySelectorAll('.xmem-sb-panel').forEach(p => p.classList.remove('active'));
-      tab.classList.add('active');
-      sidebar.querySelector(`#xmem-panel-${tab.dataset.tab}`)?.classList.add('active');
+  // Segmented control
+  const segs = sidebar.querySelectorAll<HTMLElement>(".xmem-sb-seg");
+  const indicator = sidebar.querySelector<HTMLElement>(
+    ".xmem-sb-seg-indicator",
+  );
+  segs.forEach((seg, idx) => {
+    seg.addEventListener("click", () => {
+      segs.forEach((s) => s.classList.remove("active"));
+      sidebar
+        .querySelectorAll(".xmem-sb-panel")
+        .forEach((p) => p.classList.remove("active"));
+      seg.classList.add("active");
+      sidebar
+        .querySelector(`#xmem-panel-${seg.dataset.tab}`)
+        ?.classList.add("active");
+      // Move indicator
+      if (indicator) {
+        indicator.style.transform = `translateX(${idx * 100}%)`;
+      }
+      // Show/hide search bar based on tab
+      const searchWrap = sidebar.querySelector<HTMLElement>(
+        ".xmem-sb-search-wrap",
+      );
+      const metaEl = sidebar.querySelector<HTMLElement>(".xmem-sb-meta");
+      if (seg.dataset.tab === "ask") {
+        if (searchWrap) searchWrap.style.display = "none";
+        if (metaEl) metaEl.style.display = "none";
+      } else {
+        if (searchWrap) searchWrap.style.display = "block";
+        if (metaEl) metaEl.style.display = "block";
+      }
     });
   });
 
-  const searchInput = sidebar.querySelector('#xmem-sb-search') as HTMLInputElement;
-  searchInput?.addEventListener('input', () => {
-    const q = searchInput.value.trim();
-    if (q.length >= 3) doManualSearch(q);
-    else if (q.length === 0) renderMemories(cachedResults);
+  const searchInput = sidebar.querySelector(
+    "#xmem-sb-search",
+  ) as HTMLInputElement;
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+  searchInput?.addEventListener("input", () => {
+    const q = searchInput.value.trim().toLowerCase();
+
+    // Instant local text filtering on every keystroke
+    if (q.length === 0) {
+      renderMemories(cachedResults);
+      return;
+    }
+
+    // Filter cached results: matching items first, then non-matching items hidden
+    const filtered = cachedResults.filter(
+      (m) =>
+        m.content.toLowerCase().includes(q) ||
+        m.domain.toLowerCase().includes(q),
+    );
+    renderMemories(filtered);
+
+    // Also trigger API semantic search for longer queries (debounced)
+    if (q.length >= 3) {
+      if (searchDebounce) clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(
+        () => doManualSearch(searchInput.value.trim(), q),
+        400,
+      );
+    }
   });
 
-  sidebar.querySelector('#xmem-sb-save')?.addEventListener('click', async () => {
-    const editor = findEditor();
-    if (!editor) return;
-    const text = readEditorText(editor).trim();
-    if (!text) return;
-    try { await ingestMemory(text); showToast('Memory saved!'); }
-    catch { showToast('Failed to save memory', true); }
-  });
+  sidebar
+    .querySelector("#xmem-sb-save")
+    ?.addEventListener("click", async () => {
+      const editor = findEditor();
+      if (!editor) return;
+      const text = readEditorText(editor).trim();
+      if (!text) return;
+      try {
+        await ingestMemory(text);
+        showToast("Memory saved!");
+      } catch {
+        showToast("Failed to save memory", true);
+      }
+    });
 
-  sidebar.querySelector('#xmem-ask-btn')?.addEventListener('click', async () => {
-    const input = sidebar.querySelector('#xmem-ask-input') as HTMLTextAreaElement;
-    const resultDiv = sidebar.querySelector('#xmem-ask-result') as HTMLElement;
-    const query = input?.value.trim();
-    if (!query) return;
+  sidebar
+    .querySelector("#xmem-ask-btn")
+    ?.addEventListener("click", async () => {
+      const input = sidebar.querySelector(
+        "#xmem-ask-input",
+      ) as HTMLTextAreaElement;
+      const resultDiv = sidebar.querySelector(
+        "#xmem-ask-result",
+      ) as HTMLElement;
+      const query = input?.value.trim();
+      if (!query) return;
 
-    resultDiv.innerHTML = '<div class="xmem-loader"></div>';
-    try {
-      const resp = await retrieveAnswer(query);
-      resultDiv.innerHTML = `
+      resultDiv.innerHTML = '<div class="xmem-loader"></div>';
+      try {
+        const resp = await retrieveAnswer(query);
+        resultDiv.innerHTML = `
         <div class="xmem-answer">
-          <div class="xmem-answer-text">${escapeHtml(resp.answer || 'No answer generated.')}</div>
-          ${(resp.sources?.length) ? `
+          <div class="xmem-answer-text">${escapeHtml(resp.answer || "No answer generated.")}</div>
+          ${
+            resp.sources?.length
+              ? `
             <div class="xmem-answer-sources">
-              <span class="xmem-answer-sources-label">${resp.sources.length} source${resp.sources.length > 1 ? 's' : ''}</span>
-              ${resp.sources.map((s: SourceRecord) => `
+              <span class="xmem-answer-sources-label">${resp.sources.length} source${resp.sources.length > 1 ? "s" : ""}</span>
+              ${resp.sources
+                .map(
+                  (s: SourceRecord) => `
                 <div class="xmem-source-item">
                   <span class="xmem-domain-tag xmem-domain-${s.domain}">${s.domain}</span>
                   <span>${escapeHtml(s.content.substring(0, 100))}</span>
                 </div>
-              `).join('')}
+              `,
+                )
+                .join("")}
             </div>
-          ` : ''}
+          `
+              : ""
+          }
         </div>
       `;
-    } catch {
-      resultDiv.innerHTML = '<div class="xmem-error">Failed to retrieve answer. Check connection.</div>';
-    }
-  });
+      } catch {
+        resultDiv.innerHTML =
+          '<div class="xmem-error">Failed to retrieve answer. Check connection.</div>';
+      }
+    });
 
-  sidebar.addEventListener('click', e => e.stopPropagation());
+  sidebar.addEventListener("click", (e) => e.stopPropagation());
 }
 
-async function doManualSearch(query: string) {
+async function doManualSearch(query: string, localFilter?: string) {
   try {
     const results = await searchMemories(query, { topK: 15 });
-    cachedResults = results;
-    renderMemories(results);
-  } catch { renderMemories([]); }
+    // Merge new API results into cache (add any that weren't already there)
+    const existingContents = new Set(cachedResults.map((m) => m.content));
+    for (const r of results) {
+      if (!existingContents.has(r.content)) cachedResults.push(r);
+    }
+    // If there's an active local filter, apply it before rendering
+    if (localFilter) {
+      const lf = localFilter.toLowerCase();
+      const filtered = cachedResults.filter(
+        (m) =>
+          m.content.toLowerCase().includes(lf) ||
+          m.domain.toLowerCase().includes(lf),
+      );
+      renderMemories(filtered);
+    } else {
+      renderMemories(results);
+    }
+  } catch {
+    /* keep current view on error */
+  }
 }
 
 function toggleSidebar() {
   const sidebar = createSidebar();
   sidebarOpen = !sidebarOpen;
-  sidebar.classList.toggle('xmem-sb-open', sidebarOpen);
+  sidebar.classList.toggle("xmem-sb-open", sidebarOpen);
   if (sidebarOpen) {
     renderMemories(cachedResults);
-    document.addEventListener('click', outsideClickHandler);
-    document.addEventListener('keydown', sidebarEscHandler);
+    document.addEventListener("click", outsideClickHandler);
+    document.addEventListener("keydown", sidebarEscHandler);
   } else {
-    document.removeEventListener('click', outsideClickHandler);
-    document.removeEventListener('keydown', sidebarEscHandler);
+    document.removeEventListener("click", outsideClickHandler);
+    document.removeEventListener("keydown", sidebarEscHandler);
   }
 }
 
@@ -682,76 +946,113 @@ function outsideClickHandler(e: MouseEvent) {
 }
 
 function sidebarEscHandler(e: KeyboardEvent) {
-  if (e.key === 'Escape' && sidebarOpen) toggleSidebar();
+  if (e.key === "Escape" && sidebarOpen) toggleSidebar();
+}
+
+function updateMemoryMeta(count: number) {
+  const el = document.getElementById("xmem-sb-meta");
+  if (!el) return;
+  if (count === 0) {
+    el.innerHTML = "";
+  } else {
+    el.innerHTML = `<span class="xmem-meta-count">${count} ${count === 1 ? "memory" : "memories"}</span>`;
+  }
 }
 
 function renderMemories(memories: SourceRecord[]) {
-  const panel = document.getElementById('xmem-panel-memories');
+  const panel = document.getElementById("xmem-panel-memories");
   if (!panel) return;
+
+  updateMemoryMeta(memories.length);
 
   if (memories.length === 0) {
     panel.innerHTML = `
       <div class="xmem-empty">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#52525b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7l-3 3.5L9 16c-2-1.5-4-4-4-7a7 7 0 0 1 7-7z"/>
-          <circle cx="12" cy="9" r="2.5"/>
-        </svg>
-        <p>No memories found</p>
-        <span>Start typing in a chat to see relevant memories</span>
+        <div class="xmem-empty-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7l-3 3.5L9 16c-2-1.5-4-4-4-7a7 7 0 0 1 7-7z"/>
+            <circle cx="12" cy="9" r="2.5"/>
+          </svg>
+        </div>
+        <p>No memories yet</p>
+        <span>Start a conversation and XMem will<br>automatically learn from it</span>
       </div>
     `;
+    updateMemoryMeta(0);
     return;
   }
 
-  panel.innerHTML = memories.map((m, i) => `
-    <div class="xmem-memory-card" data-idx="${i}">
-      <div class="xmem-memory-header">
-        <span class="xmem-domain-tag xmem-domain-${m.domain}">${m.domain}</span>
-        <span class="xmem-score">${(m.score * 100).toFixed(0)}%</span>
+  updateMemoryMeta(memories.length);
+
+  const domainColors: Record<string, string> = {
+    profile: "#a78bfa",
+    temporal: "#60a5fa",
+    summary: "#4ade80",
+  };
+
+  panel.innerHTML = memories
+    .map((m, i) => {
+      const color = domainColors[m.domain] || "#a78bfa";
+      const scorePercent = (m.score * 100).toFixed(0);
+      return `
+    <div class="xmem-memory-card" data-idx="${i}" style="--domain-color: ${color}">
+      <div class="xmem-memory-top">
+        <div class="xmem-memory-domain">
+          <span class="xmem-domain-dot" style="background: ${color}"></span>
+          <span class="xmem-domain-label">${m.domain}</span>
+        </div>
+        <span class="xmem-score">${scorePercent}%</span>
       </div>
       <div class="xmem-memory-text">${escapeHtml(m.content)}</div>
       <div class="xmem-memory-actions">
-        <button class="xmem-copy-btn" data-idx="${i}" title="Copy to clipboard">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button class="xmem-action-btn xmem-copy-btn" data-idx="${i}" title="Copy">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
           </svg>
+          Copy
         </button>
-        <button class="xmem-inject-btn" data-idx="${i}" title="Add to prompt">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button class="xmem-action-btn xmem-inject-btn" data-idx="${i}" title="Add to prompt">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          Add
+          Use
         </button>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+    })
+    .join("");
 
-  panel.querySelectorAll<HTMLElement>('.xmem-copy-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
+  panel.querySelectorAll<HTMLElement>(".xmem-copy-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const idx = parseInt(btn.dataset.idx || '0', 10);
+      const idx = parseInt(btn.dataset.idx || "0", 10);
       const mem = memories[idx];
       if (mem) {
         navigator.clipboard.writeText(mem.content).then(() => {
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+          btn.innerHTML =
+            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
           setTimeout(() => {
-            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+            btn.innerHTML =
+              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
           }, 1500);
         });
       }
     });
   });
 
-  panel.querySelectorAll<HTMLElement>('.xmem-inject-btn').forEach(btn => {
-    btn.addEventListener('click', e => {
+  panel.querySelectorAll<HTMLElement>(".xmem-inject-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const idx = parseInt(btn.dataset.idx || '0', 10);
+      const idx = parseInt(btn.dataset.idx || "0", 10);
       const mem = memories[idx];
       if (mem) {
         const editor = findEditor();
         if (editor) {
-          insertTextIntoEditor(editor, `\n\n[XMem/${mem.domain}] ${mem.content}`);
-          showToast('Memory added to prompt');
+          insertTextIntoEditor(
+            editor,
+            `\n\n[XMem/${mem.domain}] ${mem.content}`,
+          );
+          showToast("Memory added to prompt");
         }
       }
     });
@@ -761,15 +1062,15 @@ function renderMemories(memories: SourceRecord[]) {
 // ─── Toast ────────────────────────────────────────────────────────────────
 
 function showToast(msg: string, isError = false) {
-  document.getElementById('xmem-toast')?.remove();
-  const toast = document.createElement('div');
-  toast.id = 'xmem-toast';
-  toast.className = isError ? 'xmem-toast-error' : 'xmem-toast-success';
+  document.getElementById("xmem-toast")?.remove();
+  const toast = document.createElement("div");
+  toast.id = "xmem-toast";
+  toast.className = isError ? "xmem-toast-error" : "xmem-toast-success";
   toast.textContent = msg;
   document.body.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add('xmem-toast-visible'));
+  requestAnimationFrame(() => toast.classList.add("xmem-toast-visible"));
   setTimeout(() => {
-    toast.classList.remove('xmem-toast-visible');
+    toast.classList.remove("xmem-toast-visible");
     setTimeout(() => toast.remove(), 300);
   }, 2500);
 }
@@ -777,7 +1078,7 @@ function showToast(msg: string, isError = false) {
 // ─── Utilities ────────────────────────────────────────────────────────────
 
 function escapeHtml(text: string): string {
-  const d = document.createElement('div');
+  const d = document.createElement("div");
   d.textContent = text;
   return d.innerHTML;
 }
@@ -785,9 +1086,9 @@ function escapeHtml(text: string): string {
 // ─── Styles ───────────────────────────────────────────────────────────────
 
 function injectStyles() {
-  if (document.getElementById('xmem-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'xmem-styles';
+  if (document.getElementById("xmem-styles")) return;
+  const style = document.createElement("style");
+  style.id = "xmem-styles";
   style.textContent = `
     /* ═══ Ghost Text Autocomplete ═══ */
     .xmem-ghost {
@@ -1055,163 +1356,245 @@ function injectStyles() {
 
     /* ═══ Sidebar ═══ */
     #xmem-sidebar {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       position: fixed; top: 0; right: -420px; width: 400px; height: 100vh;
-      background: #0f0f11; border-left: 1px solid #27272a;
+      background: #0a0a0c;
+      border-left: 1px solid rgba(255, 255, 255, 0.06);
       z-index: 2147483647;
       display: flex; flex-direction: column;
-      transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      box-shadow: -4px 0 24px rgba(0,0,0,0.5);
+      transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: -12px 0 50px rgba(0,0,0,0.6);
       color: #e4e4e7;
     }
     #xmem-sidebar.xmem-sb-open { right: 0; }
 
+    /* Header */
     .xmem-sb-header {
       display: flex; justify-content: space-between; align-items: center;
-      padding: 14px 16px;
-      background: linear-gradient(135deg, #1a1a2e, #16213e);
-      border-bottom: 1px solid #27272a; flex-shrink: 0;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      flex-shrink: 0;
     }
     .xmem-sb-logo {
       display: flex; align-items: center; gap: 10px;
-      font-size: 16px; font-weight: 700; color: #fff;
+      font-size: 15px; font-weight: 700; color: #fff;
+      letter-spacing: -0.3px;
     }
     .xmem-sb-logo-icon {
-      width: 28px; height: 28px;
-      background: linear-gradient(135deg, #7c3aed, #3b82f6);
+      width: 30px; height: 30px;
+      background: linear-gradient(135deg, #7c3aed, #6366f1);
       border-radius: 8px; display: flex; align-items: center; justify-content: center;
-      font-size: 14px; font-weight: 800; color: white;
+      box-shadow: 0 2px 10px rgba(124, 58, 237, 0.25);
     }
-    .xmem-sb-header-actions { display: flex; gap: 6px; }
-    .xmem-sb-btn {
-      background: none; border: 1px solid #333; border-radius: 6px;
-      color: #a1a1aa; cursor: pointer; padding: 5px 7px;
-      display: flex; align-items: center; transition: all 0.2s;
+    .xmem-sb-close-btn {
+      background: none; border: none; color: #52525b; cursor: pointer;
+      padding: 4px; border-radius: 6px; display: flex; align-items: center;
+      transition: all 0.2s;
     }
-    .xmem-sb-btn:hover { color: #fff; border-color: #7c3aed; background: #7c3aed20; }
+    .xmem-sb-close-btn:hover { color: #a1a1aa; background: rgba(255,255,255,0.05); }
 
-    .xmem-sb-tabs {
-      display: flex; border-bottom: 1px solid #27272a; flex-shrink: 0;
+    /* Segmented Control */
+    .xmem-sb-controls {
+      padding: 12px 20px;
+      flex-shrink: 0;
     }
-    .xmem-sb-tab {
-      flex: 1; padding: 10px 12px; background: none; border: none;
-      color: #71717a; font-size: 12px; font-weight: 600; cursor: pointer;
-      border-bottom: 2px solid transparent;
-      transition: color 0.2s, border-color 0.2s;
-      text-transform: uppercase; letter-spacing: 0.5px;
+    .xmem-sb-segmented {
+      display: flex;
+      position: relative;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      padding: 3px;
     }
-    .xmem-sb-tab:hover { color: #e4e4e7; }
-    .xmem-sb-tab.active { color: #c4b5fd; border-bottom-color: #7c3aed; }
+    .xmem-sb-seg-indicator {
+      position: absolute; top: 3px; left: 3px;
+      width: calc(50% - 3px); height: calc(100% - 6px);
+      background: rgba(124, 58, 237, 0.2);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      border-radius: 8px;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 0;
+    }
+    .xmem-sb-seg {
+      flex: 1; padding: 8px 0; border: none; background: none;
+      color: #71717a; font-size: 13px; font-weight: 600; cursor: pointer;
+      text-align: center; position: relative; z-index: 1;
+      transition: color 0.25s; letter-spacing: 0.2px;
+    }
+    .xmem-sb-seg:hover { color: #a1a1aa; }
+    .xmem-sb-seg.active { color: #c4b5fd; }
 
+    /* Search */
+    .xmem-sb-search-wrap {
+      padding: 0 20px 12px;
+      flex-shrink: 0;
+    }
     .xmem-sb-search-bar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 10px 16px; border-bottom: 1px solid #27272a;
-      color: #71717a; flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      color: #52525b;
+      transition: all 0.3s;
+    }
+    .xmem-sb-search-bar:focus-within {
+      border-color: rgba(124, 58, 237, 0.4);
+      background: rgba(124, 58, 237, 0.04);
+      color: #a78bfa;
+      box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
     }
     .xmem-sb-search-bar input {
       flex: 1; background: none; border: none; outline: none;
-      color: #e4e4e7; font-size: 13px;
+      color: #e4e4e7; font-size: 13px; font-weight: 400;
     }
-    .xmem-sb-search-bar input::placeholder { color: #52525b; }
+    .xmem-sb-search-bar input::placeholder { color: #3f3f46; }
 
+    /* Meta (memory count) */
+    .xmem-sb-meta {
+      padding: 0 20px 8px; flex-shrink: 0;
+    }
+    .xmem-meta-count {
+      font-size: 11px; color: #52525b; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.8px;
+    }
+
+    /* Content area */
     .xmem-sb-content {
       flex: 1; overflow-y: auto;
-      scrollbar-width: thin; scrollbar-color: #333 transparent;
+      scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.06) transparent;
     }
     .xmem-sb-content::-webkit-scrollbar { width: 4px; }
-    .xmem-sb-content::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+    .xmem-sb-content::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.06); border-radius: 4px; }
+    .xmem-sb-content::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.12); }
 
-    .xmem-sb-panel { display: none; padding: 12px 16px; }
-    .xmem-sb-panel.active { display: block; }
+    .xmem-sb-panel { display: none; padding: 0 20px 16px; }
+    .xmem-sb-panel.active { display: block; animation: xmem-fade-in 0.3s ease; }
+    @keyframes xmem-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
+    /* Memory Cards — Left-border accent */
     .xmem-memory-card {
-      background: #18181b; border: 1px solid #27272a; border-radius: 10px;
-      padding: 12px; margin-bottom: 8px;
-      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-left: 3px solid var(--domain-color, #a78bfa);
+      border-radius: 10px;
+      padding: 14px 14px 14px 16px;
+      margin-bottom: 8px;
+      transition: all 0.2s ease;
     }
-    .xmem-memory-card:hover { border-color: #333; background: #1e1e24; }
-    .xmem-memory-header {
+    .xmem-memory-card:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.08);
+      border-left-color: var(--domain-color, #a78bfa);
+    }
+    .xmem-memory-top {
       display: flex; justify-content: space-between; align-items: center;
       margin-bottom: 8px;
     }
-    .xmem-domain-tag {
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.5px; padding: 2px 8px; border-radius: 4px;
+    .xmem-memory-domain {
+      display: flex; align-items: center; gap: 6px;
     }
-    .xmem-domain-profile { background: #7c3aed20; color: #a78bfa; }
-    .xmem-domain-temporal { background: #3b82f620; color: #60a5fa; }
-    .xmem-domain-summary { background: #22c55e20; color: #4ade80; }
-    .xmem-score { font-size: 11px; color: #71717a; font-weight: 500; }
-
+    .xmem-domain-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .xmem-domain-label {
+      font-size: 11px; font-weight: 600; color: #71717a;
+      text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .xmem-score {
+      font-size: 11px; color: #3f3f46; font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
     .xmem-memory-text {
-      font-size: 13px; line-height: 1.5; color: #d4d4d8;
-      word-break: break-word;
+      font-size: 13px; line-height: 1.55; color: #d4d4d8;
+      word-break: break-word; font-weight: 400;
     }
     .xmem-memory-actions {
-      display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end;
+      display: flex; gap: 6px; margin-top: 10px;
+      opacity: 0; transition: opacity 0.2s;
     }
-    .xmem-copy-btn, .xmem-inject-btn {
-      background: #27272a; border: 1px solid #333; border-radius: 6px;
-      color: #a1a1aa; cursor: pointer; padding: 4px 8px;
-      display: flex; align-items: center; gap: 4px;
-      font-size: 11px; font-weight: 500; transition: all 0.2s;
+    .xmem-memory-card:hover .xmem-memory-actions { opacity: 1; }
+    .xmem-action-btn {
+      background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 6px; color: #71717a; cursor: pointer;
+      padding: 4px 10px; display: flex; align-items: center; gap: 4px;
+      font-size: 11px; font-weight: 500; transition: all 0.15s;
     }
-    .xmem-copy-btn:hover, .xmem-inject-btn:hover {
-      background: #333; color: #fff; border-color: #7c3aed;
-    }
+    .xmem-action-btn:hover { background: rgba(124, 58, 237, 0.12); color: #c4b5fd; border-color: rgba(124, 58, 237, 0.25); }
 
+    /* Empty State */
     .xmem-empty {
       display: flex; flex-direction: column; align-items: center;
-      justify-content: center; padding: 48px 16px; text-align: center; gap: 10px;
+      justify-content: center; padding: 60px 24px; text-align: center; gap: 8px;
     }
-    .xmem-empty p { color: #71717a; font-size: 14px; font-weight: 500; }
-    .xmem-empty span { color: #52525b; font-size: 12px; }
+    .xmem-empty-icon { color: #27272a; margin-bottom: 4px; }
+    .xmem-empty p { color: #71717a; font-size: 14px; font-weight: 600; margin: 0; }
+    .xmem-empty span { color: #3f3f46; font-size: 12px; line-height: 1.5; }
 
-    .xmem-ask-container { display: flex; flex-direction: column; gap: 10px; }
+    /* Ask Tab */
+    .xmem-ask-container { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
+    .xmem-ask-label { font-size: 12px; font-weight: 600; color: #52525b; text-transform: uppercase; letter-spacing: 0.8px; }
     .xmem-ask-container textarea {
-      width: 100%; background: #18181b; border: 1px solid #27272a; border-radius: 8px;
-      color: #e4e4e7; padding: 10px 12px; font-size: 13px; resize: vertical;
-      font-family: inherit;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      color: #e4e4e7; padding: 12px 14px; font-size: 13px;
+      resize: vertical; font-family: inherit;
+      transition: all 0.25s; line-height: 1.5;
     }
-    .xmem-ask-container textarea:focus { outline: none; border-color: #7c3aed; }
-    .xmem-ask-container textarea::placeholder { color: #52525b; }
+    .xmem-ask-container textarea:focus {
+      outline: none; border-color: rgba(124, 58, 237, 0.4);
+      box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.08);
+    }
+    .xmem-ask-container textarea::placeholder { color: #3f3f46; }
     .xmem-ask-btn {
-      background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white;
-      border: none; border-radius: 8px; padding: 10px 16px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      background: #7c3aed; color: white;
+      border: none; border-radius: 10px; padding: 10px 20px;
       font-size: 13px; font-weight: 600; cursor: pointer;
-      transition: filter 0.2s;
+      transition: all 0.2s; letter-spacing: 0.2px;
     }
-    .xmem-ask-btn:hover { filter: brightness(1.1); }
-    .xmem-ask-result { min-height: 40px; }
+    .xmem-ask-btn:hover { background: #6d28d9; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(124, 58, 237, 0.3); }
+    .xmem-ask-btn:active { transform: scale(0.98); }
+    .xmem-ask-result { min-height: 24px; }
     .xmem-answer {
-      padding: 12px; background: #18181b;
-      border: 1px solid #27272a; border-radius: 8px;
+      padding: 14px; background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-left: 3px solid #7c3aed;
+      border-radius: 10px;
+      animation: xmem-fade-in 0.3s ease;
     }
     .xmem-answer-text { font-size: 13px; line-height: 1.6; color: #d4d4d8; }
-    .xmem-answer-sources {
-      margin-top: 10px; border-top: 1px solid #27272a; padding-top: 8px;
-    }
-    .xmem-answer-sources-label {
-      font-size: 11px; color: #71717a; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.5px;
-    }
+    .xmem-answer-sources { margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.04); padding-top: 10px; }
+    .xmem-answer-sources-label { font-size: 10px; color: #52525b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
     .xmem-source-item {
       display: flex; align-items: flex-start; gap: 6px;
-      margin-top: 6px; font-size: 12px; color: #a1a1aa;
+      margin-top: 6px; font-size: 12px; color: #71717a;
     }
-    .xmem-error { color: #ef4444; font-size: 13px; padding: 10px; }
+    .xmem-error { color: #f87171; font-size: 13px; padding: 12px; background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.15); border-radius: 8px; }
 
+    /* Footer */
     .xmem-sb-footer {
-      padding: 10px 16px; border-top: 1px solid #27272a;
-      font-size: 11px; color: #52525b; text-align: center; flex-shrink: 0;
+      padding: 10px 20px; border-top: 1px solid rgba(255, 255, 255, 0.04);
+      flex-shrink: 0;
     }
-    .xmem-sb-footer kbd {
-      background: #27272a; padding: 1px 5px; border-radius: 4px;
+    .xmem-sb-footer-inner {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .xmem-sb-footer-text { font-size: 11px; color: #27272a; font-weight: 500; }
+    .xmem-sb-kbd { display: flex; gap: 3px; }
+    .xmem-sb-kbd kbd {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 20px; height: 20px; padding: 0 5px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 4px; font-size: 11px; font-weight: 600; color: #3f3f46;
       font-family: inherit;
     }
 
     .xmem-loader {
-      width: 20px; height: 20px; border: 2px solid #333;
+      width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.06);
       border-top-color: #7c3aed; border-radius: 50%;
       animation: xmem-spin 0.8s linear infinite;
       margin: 20px auto;
@@ -1260,6 +1643,147 @@ function injectStyles() {
       from { opacity: 0; transform: translate(-50%, 10px) scale(0.9); }
       to { opacity: 1; transform: translate(-50%, 0) scale(1); }
     }
+
+    /* ═══ Mode Toggle Widget ═══ */
+    #xmem-mode-toggle {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      position: fixed;
+      z-index: 2147483647;
+      cursor: grab;
+      user-select: none;
+      animation: xmem-ghost-appear 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    #xmem-mode-toggle.xmem-dragging { cursor: grabbing; opacity: 0.9; transform: scale(0.98); }
+    .xmem-toggle-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .xmem-toggle-switch {
+      display: flex;
+      align-items: center;
+      background: rgba(15, 15, 17, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      padding: 4px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(124,58,237,0.1) inset;
+      position: relative;
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s;
+    }
+    .xmem-toggle-switch:hover {
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(124,58,237,0.2) inset;
+      transform: translateY(-2px);
+    }
+    .xmem-toggle-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 18px;
+      border-radius: 10px;
+      border: none;
+      background: transparent;
+      color: #71717a;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      white-space: nowrap;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      position: relative;
+      z-index: 1;
+    }
+    .xmem-toggle-option:hover:not(.active) {
+      color: #e4e4e7;
+      background: rgba(255,255,255,0.05);
+    }
+    .xmem-toggle-option.active {
+      color: #fff;
+      text-shadow: 0 0 12px rgba(255,255,255,0.3);
+    }
+    .xmem-toggle-option.active.xmem-mode-ingest {
+      background: linear-gradient(135deg, rgba(124, 58, 237, 0.9), rgba(109, 40, 217, 0.9));
+      box-shadow: 0 4px 12px rgba(124,58,237,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .xmem-toggle-option.active.xmem-mode-search {
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(37, 99, 235, 0.9));
+      box-shadow: 0 4px 12px rgba(59,130,246,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+    .xmem-toggle-icon {
+      display: flex;
+      align-items: center;
+      opacity: 0.8;
+      transition: opacity 0.3s;
+    }
+    .xmem-toggle-option.active .xmem-toggle-icon { opacity: 1; }
+    
+    .xmem-toggle-note {
+      font-size: 10px;
+      color: #a1a1aa;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      padding: 4px 10px;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 20px;
+      backdrop-filter: blur(10px);
+      text-align: center;
+      max-width: 200px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      transition: all 0.3s ease;
+    }
+
+    /* ═══ Ingest Status Banner ═══ */
+    .xmem-ingest-status {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      z-index: 2147483647;
+      opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+      
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+    .xmem-ingest-status.xmem-status-visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .xmem-ingest-status.xmem-ingest-pending {
+      background: rgba(124, 58, 237, 0.08);
+      border: 1px solid rgba(124, 58, 237, 0.2);
+      color: #c4b5fd;
+    }
+    .xmem-ingest-status.xmem-ingest-success {
+      background: rgba(34, 197, 94, 0.08);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      color: #4ade80;
+    }
+    .xmem-ingest-status.xmem-ingest-error {
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: #f87171;
+    }
+    .xmem-ingest-spinner {
+      width: 12px; height: 12px;
+      border: 2px solid rgba(124, 58, 237, 0.2);
+      border-top-color: #7c3aed;
+      border-radius: 50%;
+      animation: xmem-spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -1274,21 +1798,32 @@ function observeAIResponsesForFactChecking() {
     if (factCheckTimer) clearTimeout(factCheckTimer);
     factCheckTimer = setTimeout(runFactCheck, 2000); // Wait for stream to settle a bit
   });
-  mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+  mo.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
 }
 
 async function runFactCheck() {
-  const enabled = await new Promise<boolean>(resolve => {
+  // Only run fact checking in search mode
+  if (xmemMode !== "search") return;
+
+  const enabled = await new Promise<boolean>((resolve) => {
     if (!chrome?.storage?.sync) return resolve(false);
-    chrome.storage.sync.get(['xmem_enabled'], d => resolve(d.xmem_enabled !== false));
+    chrome.storage.sync.get(["xmem_enabled"], (d) =>
+      resolve(d.xmem_enabled !== false),
+    );
   });
   if (!enabled) return;
 
-  const nodes = document.querySelectorAll<HTMLElement>('[data-message-author-role="assistant"], .font-claude-message, model-response, .prose');
+  const nodes = document.querySelectorAll<HTMLElement>(
+    '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
+  );
   const latestNode = nodes[nodes.length - 1];
-  
+
   if (!latestNode || factCheckedNodes.has(latestNode)) return;
-  
+
   // Basic heuristic: check if it's done streaming (has enough length and hasn't changed in the last 2s)
   const text = latestNode.textContent?.trim();
   if (!text || text.length < 50) return;
@@ -1301,7 +1836,7 @@ async function runFactCheck() {
     // (In a real app, we'd have a specialized /fact_check endpoint, but we can simulate it with retrieveAnswer)
     const query = `Is this true based on my memories? "${text.substring(0, 500)}"`;
     const resp = await retrieveAnswer(query);
-    
+
     if (resp && resp.sources && resp.sources.length > 0) {
       // Very simple heuristic: if XMem found sources and synthesized an answer, inject a subtle "Fact Check" badge
       injectFactCheckBadge(latestNode, resp.answer);
@@ -1313,12 +1848,12 @@ async function runFactCheck() {
 
 function injectFactCheckBadge(node: HTMLElement, feedback: string) {
   // Ensure relative positioning context
-  if (getComputedStyle(node).position === 'static') {
-    node.style.position = 'relative';
+  if (getComputedStyle(node).position === "static") {
+    node.style.position = "relative";
   }
 
-  const badge = document.createElement('div');
-  badge.className = `xmem-fact-check-badge ${isDarkBackground(document.body) ? 'xmem-dark-theme' : 'xmem-light-theme'}`;
+  const badge = document.createElement("div");
+  badge.className = `xmem-fact-check-badge ${isDarkBackground(document.body) ? "xmem-dark-theme" : "xmem-light-theme"}`;
   badge.innerHTML = `
     <span class="xmem-fact-icon">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1337,18 +1872,18 @@ function injectFactCheckBadge(node: HTMLElement, feedback: string) {
 // ─── Highlight-to-Remember ────────────────────────────────────────────────
 
 let highlightBtn: HTMLElement | null = null;
-let currentSelectionText = '';
+let currentSelectionText = "";
 
 function setupHighlightToRemember() {
-  document.addEventListener('mouseup', handleSelection);
-  document.addEventListener('mousedown', (e) => {
+  document.addEventListener("mouseup", handleSelection);
+  document.addEventListener("mousedown", (e) => {
     if (highlightBtn && highlightBtn.contains(e.target as Node)) {
       return;
     }
     dismissHighlightBtn();
   });
-  
-  document.addEventListener('selectionchange', () => {
+
+  document.addEventListener("selectionchange", () => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) {
       dismissHighlightBtn();
@@ -1358,9 +1893,11 @@ function setupHighlightToRemember() {
 
 function handleSelection(e: MouseEvent) {
   setTimeout(async () => {
-    const enabled = await new Promise<boolean>(resolve => {
+    const enabled = await new Promise<boolean>((resolve) => {
       if (!chrome?.storage?.sync) return resolve(false);
-      chrome.storage.sync.get(['xmem_enabled'], d => resolve(d.xmem_enabled !== false));
+      chrome.storage.sync.get(["xmem_enabled"], (d) =>
+        resolve(d.xmem_enabled !== false),
+      );
     });
     if (!enabled) return;
 
@@ -1376,9 +1913,11 @@ function handleSelection(e: MouseEvent) {
       return;
     }
 
-    if (activeSidecar?.contains(sel.anchorNode) || 
-        sidebarEl?.contains(sel.anchorNode) || 
-        highlightBtn?.contains(sel.anchorNode)) {
+    if (
+      activeSidecar?.contains(sel.anchorNode) ||
+      sidebarEl?.contains(sel.anchorNode) ||
+      highlightBtn?.contains(sel.anchorNode)
+    ) {
       return;
     }
 
@@ -1394,24 +1933,24 @@ function handleSelection(e: MouseEvent) {
 
 function showHighlightBtn(sel: Selection, e: MouseEvent) {
   if (!highlightBtn) {
-    highlightBtn = document.createElement('div');
-    highlightBtn.id = 'xmem-highlight-btn';
+    highlightBtn = document.createElement("div");
+    highlightBtn.id = "xmem-highlight-btn";
     highlightBtn.innerHTML = `
       <div class="xmem-hl-icon">X</div>
       <span>Remember</span>
     `;
-    
-    highlightBtn.addEventListener('mousedown', (ev) => {
+
+    highlightBtn.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
     });
 
-    highlightBtn.addEventListener('click', async (ev) => {
+    highlightBtn.addEventListener("click", async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       const textToSave = currentSelectionText;
       if (!textToSave) return;
-      
+
       if (highlightBtn) {
         highlightBtn.innerHTML = `
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1419,7 +1958,7 @@ function showHighlightBtn(sel: Selection, e: MouseEvent) {
           </svg>
           <span>Saved</span>
         `;
-        highlightBtn.classList.add('xmem-hl-success');
+        highlightBtn.classList.add("xmem-hl-success");
       }
 
       try {
@@ -1433,33 +1972,33 @@ function showHighlightBtn(sel: Selection, e: MouseEvent) {
         window.getSelection()?.removeAllRanges();
       }, 1500);
     });
-    
+
     document.body.appendChild(highlightBtn);
   }
 
   const range = sel.getRangeAt(0);
   const rect = range.getBoundingClientRect();
-  
+
   const top = rect.top > 0 ? rect.top : e.clientY;
   const left = rect.left > 0 ? rect.left + rect.width / 2 : e.clientX;
 
-  highlightBtn.className = `xmem-highlight-btn ${isDarkBackground(document.body) ? 'xmem-dark-theme' : 'xmem-light-theme'}`;
-  
+  highlightBtn.className = `xmem-highlight-btn ${isDarkBackground(document.body) ? "xmem-dark-theme" : "xmem-light-theme"}`;
+
   highlightBtn.style.top = `${top - 40}px`;
   highlightBtn.style.left = `${left}px`;
-  highlightBtn.style.display = 'flex';
+  highlightBtn.style.display = "flex";
 }
 
 function dismissHighlightBtn() {
   if (highlightBtn) {
-    highlightBtn.style.display = 'none';
-    highlightBtn.classList.remove('xmem-hl-success');
+    highlightBtn.style.display = "none";
+    highlightBtn.classList.remove("xmem-hl-success");
     highlightBtn.innerHTML = `
       <div class="xmem-hl-icon">X</div>
       <span>Remember</span>
     `;
   }
-  currentSelectionText = '';
+  currentSelectionText = "";
 }
 
 // ─── Main Loop ────────────────────────────────────────────────────────────
@@ -1468,20 +2007,27 @@ function mainLoop() {
   const editor = findEditor();
   if (!editor) return;
 
-  ensureChip(editor);
-  positionChip(editor);
+  // Only show chip and autocomplete in search mode
+  if (xmemMode === "search") {
+    ensureChip(editor);
+    positionChip(editor);
+  } else {
+    hideChip();
+  }
 
   hookSendButtons();
   hookEnterKey(editor);
 
   if (editor.dataset.xmemBound) return;
-  editor.dataset.xmemBound = '1';
+  editor.dataset.xmemBound = "1";
 
   const onInput = () => {
     dismissGhost();
+    if (xmemMode !== "search") return;
     if (!chrome?.storage?.sync) return;
-    chrome.storage.sync.get(['xmem_enabled', 'xmem_live_suggest'], data => {
-      if (data.xmem_enabled === false || data.xmem_live_suggest === false) return;
+    chrome.storage.sync.get(["xmem_enabled", "xmem_live_suggest"], (data) => {
+      if (data.xmem_enabled === false || data.xmem_live_suggest === false)
+        return;
       const text = readEditorText(editor).trim();
       if (debounceTimer) clearTimeout(debounceTimer);
       if (text.length >= MIN_QUERY_LEN && isCursorAtEnd(editor)) {
@@ -1493,42 +2039,52 @@ function mainLoop() {
     });
   };
 
-  editor.addEventListener('input', onInput);
-  editor.addEventListener('keyup', onInput);
+  editor.addEventListener("input", onInput);
+  editor.addEventListener("keyup", onInput);
 
-  editor.addEventListener('focus', () => {
+  editor.addEventListener("focus", () => {
     showChip();
     positionChip(editor);
   });
 
   // Tab to accept / Escape to dismiss — capture phase to fire before platform handlers
-  editor.addEventListener('keydown', (e: Event) => {
-    const ke = e as KeyboardEvent;
-    if (ke.key === 'Tab' && ghostAnswer) {
-      ke.preventDefault();
-      ke.stopPropagation();
-      acceptGhost();
-    } else if (ke.key === 'Escape' && ghostAnswer) {
-      ke.preventDefault();
-      ke.stopPropagation();
-      dismissGhost();
-    }
-  }, true);
+  editor.addEventListener(
+    "keydown",
+    (e: Event) => {
+      const ke = e as KeyboardEvent;
+      if (ke.key === "Tab" && ghostAnswer) {
+        ke.preventDefault();
+        ke.stopPropagation();
+        acceptGhost();
+      } else if (ke.key === "Escape" && ghostAnswer) {
+        ke.preventDefault();
+        ke.stopPropagation();
+        dismissGhost();
+      }
+    },
+    true,
+  );
 
-  editor.addEventListener('blur', () => dismissGhost());
-  editor.addEventListener('scroll', () => {
+  editor.addEventListener("blur", () => dismissGhost());
+  editor.addEventListener("scroll", () => {
     if (!ghostAnswer) return;
     const pos = getCaretXY(editor);
-    if (!pos || !ghostEl) { dismissGhost(); return; }
+    if (!pos || !ghostEl) {
+      dismissGhost();
+      return;
+    }
     const edRect = editor.getBoundingClientRect();
-    if (pos.y < edRect.top || pos.y > edRect.bottom) { dismissGhost(); return; }
+    if (pos.y < edRect.top || pos.y > edRect.bottom) {
+      dismissGhost();
+      return;
+    }
     ghostEl.style.left = `${pos.x}px`;
     ghostEl.style.top = `${pos.y}px`;
   });
 }
 
 // Dismiss ghost when cursor moves away from end
-document.addEventListener('selectionchange', () => {
+document.addEventListener("selectionchange", () => {
   if (!ghostAnswer) return;
   const ed = findEditor();
   if (!ed || !isCursorAtEnd(ed)) dismissGhost();
@@ -1539,7 +2095,10 @@ let observerActive = false;
 function startObserver() {
   if (observerActive) return;
   observerActive = true;
-  new MutationObserver(mainLoop).observe(document.body, { childList: true, subtree: true });
+  new MutationObserver(mainLoop).observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
   observeAIResponsesForFactChecking();
   setupHighlightToRemember();
   mainLoop();
@@ -1547,19 +2106,190 @@ function startObserver() {
 
 // ─── Keyboard Shortcuts ───────────────────────────────────────────────────
 
-document.addEventListener('keydown', e => {
-  if (e.ctrlKey && e.shiftKey && e.key === 'M') {
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.shiftKey && e.key === "M") {
     e.preventDefault();
     toggleSidebar();
   }
 });
 
-chrome.runtime.onMessage.addListener(request => {
-  if (request.action === 'xmem_toggle_sidebar') toggleSidebar();
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.action === "xmem_toggle_sidebar") toggleSidebar();
   return undefined;
 });
+
+// ─── Mode Toggle Widget ─────────────────────────────────────────────────
+
+function createModeToggle() {
+  if (modeToggleEl && document.body.contains(modeToggleEl)) return;
+
+  modeToggleEl = document.createElement("div");
+  modeToggleEl.id = "xmem-mode-toggle";
+
+  // Load saved mode and position
+  if (chrome?.storage?.sync) {
+    chrome.storage.sync.get(
+      ["xmem_mode", "xmem_toggle_x", "xmem_toggle_y"],
+      (data) => {
+        if (data.xmem_mode === "ingest" || data.xmem_mode === "search") {
+          xmemMode = data.xmem_mode;
+        }
+        if (modeToggleEl) {
+          const x = data.xmem_toggle_x ?? window.innerWidth - 230;
+          const y = data.xmem_toggle_y ?? 16;
+          modeToggleEl.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
+          modeToggleEl.style.top = `${Math.min(y, window.innerHeight - 60)}px`;
+        }
+        renderToggle();
+      },
+    );
+  } else {
+    modeToggleEl.style.right = "80px";
+    modeToggleEl.style.top = "16px";
+  }
+
+  renderToggle();
+  document.body.appendChild(modeToggleEl);
+  setupDrag(modeToggleEl);
+}
+
+function renderToggle() {
+  if (!modeToggleEl) return;
+
+  const ingestActive = xmemMode === "ingest";
+  const searchActive = xmemMode === "search";
+
+  const noteText = ingestActive
+    ? "Saves conversations to memory"
+    : "Autocomplete, suggestions & recall";
+
+  modeToggleEl.innerHTML = `
+    <div class="xmem-toggle-container">
+      <div class="xmem-toggle-switch">
+        <button class="xmem-toggle-option ${ingestActive ? "active xmem-mode-ingest" : ""}" data-mode="ingest">
+          <span class="xmem-toggle-icon">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14"/><path d="M5 12h14"/>
+            </svg>
+          </span>
+          Ingest
+        </button>
+        <button class="xmem-toggle-option ${searchActive ? "active xmem-mode-search" : ""}" data-mode="search">
+          <span class="xmem-toggle-icon">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          Search
+        </button>
+      </div>
+      <div class="xmem-toggle-note">${noteText}</div>
+    </div>
+  `;
+
+  // Attach click handlers
+  modeToggleEl
+    .querySelectorAll<HTMLElement>(".xmem-toggle-option")
+    .forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const newMode = btn.dataset.mode as XMemMode;
+        if (newMode && newMode !== xmemMode) {
+          xmemMode = newMode;
+          renderToggle();
+
+          // Persist mode
+          if (chrome?.storage?.sync) {
+            chrome.storage.sync.set({ xmem_mode: xmemMode });
+          }
+
+          // Clean up search artifacts when switching to ingest
+          if (xmemMode === "ingest") {
+            dismissGhost();
+            hideChip();
+            if (activeSidecar) {
+              activeSidecar.remove();
+              activeSidecar = null;
+            }
+          } else {
+            // Re-show chip when switching to search
+            const editor = findEditor();
+            if (editor) {
+              ensureChip(editor);
+              positionChip(editor);
+              showChip();
+            }
+          }
+
+          showToast(
+            `Mode: ${xmemMode === "ingest" ? "Ingest ─ saving memories" : "Search ─ full features"}`,
+          );
+        }
+      });
+    });
+}
+
+function setupDrag(el: HTMLElement) {
+  let isDragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let elStartX = 0;
+  let elStartY = 0;
+  let hasMoved = false;
+
+  el.addEventListener("mousedown", (e: MouseEvent) => {
+    // Only drag from the container, not buttons
+    const target = e.target as HTMLElement;
+    if (target.closest(".xmem-toggle-option")) return;
+
+    isDragging = true;
+    hasMoved = false;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    const rect = el.getBoundingClientRect();
+    elStartX = rect.left;
+    elStartY = rect.top;
+    el.classList.add("xmem-dragging");
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e: MouseEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+
+    const newX = Math.max(
+      0,
+      Math.min(elStartX + dx, window.innerWidth - el.offsetWidth),
+    );
+    const newY = Math.max(
+      0,
+      Math.min(elStartY + dy, window.innerHeight - el.offsetHeight),
+    );
+
+    el.style.left = `${newX}px`;
+    el.style.top = `${newY}px`;
+    el.style.right = "auto";
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!isDragging) return;
+    isDragging = false;
+    el.classList.remove("xmem-dragging");
+
+    // Persist position
+    if (hasMoved && chrome?.storage?.sync) {
+      chrome.storage.sync.set({
+        xmem_toggle_x: parseInt(el.style.left),
+        xmem_toggle_y: parseInt(el.style.top),
+      });
+    }
+  });
+}
 
 // ─── Boot ─────────────────────────────────────────────────────────────────
 
 injectStyles();
 startObserver();
+createModeToggle();
