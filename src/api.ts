@@ -9,9 +9,16 @@ import type {
   IngestResult,
   RetrieveResult,
   HealthStatus,
+  CodeQueryResult,
+  DirectoryTreeResult,
+  DirectoryNode,
+  RepoListResult,
 } from 'xmem-ai';
 
-export type { SourceRecord, IngestResult, RetrieveResult, HealthStatus };
+export type {
+  SourceRecord, IngestResult, RetrieveResult, HealthStatus,
+  CodeQueryResult, DirectoryTreeResult, DirectoryNode, RepoListResult,
+};
 
 export interface XMemConfig {
   apiUrl: string;
@@ -209,6 +216,65 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     return status;
   } catch (err) {
     console.error('[XMem] Health status error:', err);
+    throw err;
+  }
+}
+
+// ─── Code Retrieval (IDE mode) ────────────────────────────────────────────
+
+export async function queryCode(
+  orgId: string,
+  repo: string,
+  query: string,
+  opts: { topK?: number } = {},
+): Promise<CodeQueryResult> {
+  return apiQueue.enqueue(async () => {
+    const { client, userId } = await getClient();
+    console.log('[XMem] Code query:', query.slice(0, 50));
+    try {
+      const result = await client.codeQuery({
+        org_id: orgId,
+        repo,
+        query,
+        user_id: userId,
+        top_k: opts.topK || 10,
+      });
+      console.log('[XMem] Code query result:', result.answer?.slice(0, 100));
+      return result;
+    } catch (err) {
+      console.error('[XMem] Code query error:', err);
+      throw err;
+    }
+  });
+}
+
+export async function getDirectoryTree(
+  orgId: string,
+  repo: string,
+): Promise<DirectoryTreeResult> {
+  const { client } = await getClient();
+  console.log('[XMem] Fetching directory tree for', orgId, repo);
+  try {
+    const result = await client.getDirectoryTree(orgId, repo);
+    console.log('[XMem] Directory tree loaded');
+    return result;
+  } catch (err) {
+    console.error('[XMem] Directory tree error:', err);
+    throw err;
+  }
+}
+
+export async function listRepos(
+  orgId: string,
+): Promise<RepoListResult> {
+  const { client } = await getClient();
+  console.log('[XMem] Listing repos for org:', orgId);
+  try {
+    const result = await client.listRepos(orgId);
+    console.log('[XMem] Repos:', result.repos);
+    return result;
+  } catch (err) {
+    console.error('[XMem] List repos error:', err);
     throw err;
   }
 }
