@@ -11,8 +11,13 @@ import {
   retrieveAnswer,
   searchMemories,
   ingestMemory,
+  queryCode,
+  getDirectoryTree,
+  listRepos,
   type SourceRecord,
   type RetrieveResult,
+  type DirectoryNode,
+  type CodeQueryResult,
 } from "./api";
 
 // ─── Config ───────────────────────────────────────────────────────────────
@@ -36,11 +41,23 @@ let sidebarEl: HTMLElement | null = null;
 let chipEl: HTMLElement | null = null;
 let cachedResults: SourceRecord[] = [];
 
-// ─── Mode Toggle State ───────────────────────────────────────────────────
+// ─── Mode State ───────────────────────────────────────────────────────────
 
-type XMemMode = "ingest" | "search";
+type XMemMode = "ingest" | "search" | "ide";
 let xmemMode: XMemMode = "search";
-let modeToggleEl: HTMLElement | null = null;
+
+// ─── IDE Mode State ───────────────────────────────────────────────────────
+
+let idePanelEl: HTMLElement | null = null;
+let idePanelOpen = false;
+let ideOrgId = "";
+let ideRepo = "";
+let ideTreeData: DirectoryNode | null = null;
+
+// ─── Slash Command State ──────────────────────────────────────────────────
+
+let slashDropdownEl: HTMLElement | null = null;
+let slashSelectedIdx = 0;
 
 // ─── Editor Detection ─────────────────────────────────────────────────────
 
@@ -1644,96 +1661,255 @@ function injectStyles() {
       to { opacity: 1; transform: translate(-50%, 0) scale(1); }
     }
 
-    /* ═══ Mode Toggle Widget ═══ */
-    #xmem-mode-toggle {
+    /* ═══ Slash Command Dropdown ═══ */
+    #xmem-slash-dropdown {
       font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      position: fixed;
-      z-index: 2147483647;
-      cursor: grab;
-      user-select: none;
-      animation: xmem-ghost-appear 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      display: none;
+      background: #18181b;
+      border: 1px solid #3f3f46;
+      border-radius: 10px;
+      padding: 4px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      min-width: 260px;
+      animation: xmem-fade-in 0.15s ease;
     }
-    #xmem-mode-toggle.xmem-dragging { cursor: grabbing; opacity: 0.9; transform: scale(0.98); }
-    .xmem-toggle-container {
+    .xmem-slash-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .xmem-slash-option:hover,
+    .xmem-slash-option.xmem-slash-selected {
+      background: rgba(255,255,255,0.06);
+    }
+    .xmem-slash-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.04);
+      flex-shrink: 0;
+    }
+    .xmem-slash-text {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 6px;
+      gap: 1px;
     }
-    .xmem-toggle-switch {
-      display: flex;
-      align-items: center;
-      background: rgba(15, 15, 17, 0.7);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 14px;
-      padding: 4px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 0 0 1px rgba(124,58,237,0.1) inset;
-      position: relative;
-      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s;
+    .xmem-slash-cmd {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
     }
-    .xmem-toggle-switch:hover {
-      box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(124,58,237,0.2) inset;
-      transform: translateY(-2px);
-    }
-    .xmem-toggle-option {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 8px 18px;
-      border-radius: 10px;
-      border: none;
-      background: transparent;
+    .xmem-slash-desc {
+      font-size: 11px;
       color: #71717a;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      white-space: nowrap;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      position: relative;
-      z-index: 1;
     }
-    .xmem-toggle-option:hover:not(.active) {
+
+    /* ═══ IDE Panel ═══ */
+    #xmem-ide-panel {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      position: fixed;
+      top: 0; right: 0;
+      width: 340px; height: 100vh;
+      background: #0c0c0e;
+      border-left: 1px solid rgba(255,255,255,0.06);
+      z-index: 2147483646;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -8px 0 40px rgba(0,0,0,0.5);
+      color: #d4d4d8;
+      animation: xmem-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .xmem-ide-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    .xmem-ide-logo {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 14px; font-weight: 700; color: #fff;
+    }
+    .xmem-ide-logo-icon {
+      width: 26px; height: 26px;
+      background: linear-gradient(135deg, #22c55e, #16a34a);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(34,197,94,0.3);
+    }
+    .xmem-ide-close-btn {
+      background: none; border: none; color: #52525b;
+      cursor: pointer; padding: 4px; border-radius: 6px;
+      display: flex; align-items: center; transition: all 0.2s;
+    }
+    .xmem-ide-close-btn:hover { color: #a1a1aa; background: rgba(255,255,255,0.05); }
+
+    .xmem-ide-config {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .xmem-ide-field label {
+      display: block;
+      font-size: 10px; font-weight: 600; color: #52525b;
+      text-transform: uppercase; letter-spacing: 0.6px;
+      margin-bottom: 4px;
+    }
+    .xmem-ide-field input {
+      width: 100%;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 6px;
       color: #e4e4e7;
-      background: rgba(255,255,255,0.05);
+      padding: 7px 10px;
+      font-size: 12px;
+      font-family: inherit;
     }
-    .xmem-toggle-option.active {
-      color: #fff;
-      text-shadow: 0 0 12px rgba(255,255,255,0.3);
+    .xmem-ide-field input:focus {
+      outline: none;
+      border-color: rgba(34,197,94,0.4);
     }
-    .xmem-toggle-option.active.xmem-mode-ingest {
-      background: linear-gradient(135deg, rgba(124, 58, 237, 0.9), rgba(109, 40, 217, 0.9));
-      box-shadow: 0 4px 12px rgba(124,58,237,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    .xmem-ide-field input::placeholder { color: #3f3f46; }
+    .xmem-ide-load-btn {
+      background: #22c55e; color: #fff;
+      border: none; border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 12px; font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
     }
-    .xmem-toggle-option.active.xmem-mode-search {
-      background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(37, 99, 235, 0.9));
-      box-shadow: 0 4px 12px rgba(59,130,246,0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    .xmem-ide-load-btn:hover { background: #16a34a; }
+
+    .xmem-ide-tree-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.06) transparent;
     }
-    .xmem-toggle-icon {
+    .xmem-ide-tree-container::-webkit-scrollbar { width: 4px; }
+    .xmem-ide-tree-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 4px; }
+    .xmem-ide-empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: #3f3f46;
+      font-size: 12px;
+    }
+
+    /* Directory tree nodes */
+    .xmem-tree-dir-header {
       display: flex;
       align-items: center;
-      opacity: 0.8;
-      transition: opacity 0.3s;
+      gap: 4px;
+      padding: 3px 8px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 0.1s;
+      user-select: none;
     }
-    .xmem-toggle-option.active .xmem-toggle-icon { opacity: 1; }
-    
-    .xmem-toggle-note {
-      font-size: 10px;
+    .xmem-tree-dir-header:hover { background: rgba(255,255,255,0.04); }
+    .xmem-tree-arrow {
+      width: 14px; height: 14px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; color: #52525b;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+    .xmem-tree-arrow::before { content: '\\25B6'; }
+    .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-arrow { transform: rotate(90deg); }
+    .xmem-tree-children { display: none; }
+    .xmem-tree-open > .xmem-tree-children { display: block; }
+
+    .xmem-tree-folder-icon {
+      width: 14px; height: 14px;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .xmem-tree-folder-icon::before {
+      content: '\\1F4C1';
+      font-size: 12px;
+      filter: grayscale(0.5) brightness(0.8);
+    }
+    .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-folder-icon::before {
+      content: '\\1F4C2';
+    }
+
+    .xmem-tree-file {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      transition: background 0.1s;
+      cursor: default;
+    }
+    .xmem-tree-file:hover { background: rgba(255,255,255,0.03); }
+    .xmem-tree-name {
+      font-size: 12px;
       color: #a1a1aa;
-      font-weight: 600;
-      letter-spacing: 0.3px;
-      padding: 4px 10px;
-      background: rgba(0,0,0,0.4);
-      border: 1px solid rgba(255,255,255,0.05);
-      border-radius: 20px;
-      backdrop-filter: blur(10px);
-      text-align: center;
-      max-width: 200px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      transition: all 0.3s ease;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .xmem-tree-dir-header .xmem-tree-name { color: #d4d4d8; font-weight: 500; }
+
+    .xmem-tree-icon {
+      width: 14px; height: 14px;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      font-size: 10px;
+      border-radius: 2px;
+    }
+    .xmem-icon-file::before { content: '\\1F4C4'; font-size: 11px; filter: grayscale(1) brightness(0.6); }
+    .xmem-icon-py::before { content: '\\1F40D'; font-size: 11px; }
+    .xmem-icon-ts::before { content: 'TS'; font-size: 8px; font-weight: 800; color: #3178c6; }
+    .xmem-icon-js::before { content: 'JS'; font-size: 8px; font-weight: 800; color: #f7df1e; }
+    .xmem-icon-json::before { content: '{}'; font-size: 8px; font-weight: 700; color: #71717a; }
+    .xmem-icon-md::before { content: 'MD'; font-size: 8px; font-weight: 800; color: #71717a; }
+    .xmem-icon-css::before { content: '#'; font-size: 10px; font-weight: 800; color: #38bdf8; }
+    .xmem-icon-html::before { content: '<>'; font-size: 8px; font-weight: 700; color: #f97316; }
+    .xmem-icon-yaml::before { content: 'Y'; font-size: 9px; font-weight: 800; color: #71717a; }
+    .xmem-icon-java::before { content: 'J'; font-size: 9px; font-weight: 800; color: #b07219; }
+    .xmem-icon-go::before { content: 'Go'; font-size: 8px; font-weight: 800; color: #00add8; }
+    .xmem-icon-rs::before { content: 'Rs'; font-size: 8px; font-weight: 800; color: #dea584; }
+
+    .xmem-ide-query-section {
+      padding: 12px 16px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    .xmem-ide-query-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 8px;
+      color: #52525b;
+      transition: all 0.2s;
+    }
+    .xmem-ide-query-bar:focus-within {
+      border-color: rgba(34,197,94,0.4);
+      color: #4ade80;
+    }
+    .xmem-ide-query-bar input {
+      flex: 1; background: none; border: none; outline: none;
+      color: #e4e4e7; font-size: 12px;
+    }
+    .xmem-ide-query-bar input::placeholder { color: #3f3f46; }
+    .xmem-ide-query-result {
+      margin-top: 8px;
+      max-height: 200px;
+      overflow-y: auto;
     }
 
     /* ═══ Ingest Status Banner ═══ */
@@ -2023,6 +2199,7 @@ function mainLoop() {
 
   const onInput = () => {
     dismissGhost();
+    checkSlashCommand(editor);
     if (xmemMode !== "search") return;
     if (!chrome?.storage?.sync) return;
     chrome.storage.sync.get(["xmem_enabled", "xmem_live_suggest"], (data) => {
@@ -2043,15 +2220,17 @@ function mainLoop() {
   editor.addEventListener("keyup", onInput);
 
   editor.addEventListener("focus", () => {
-    showChip();
-    positionChip(editor);
+    if (xmemMode === "search") {
+      showChip();
+      positionChip(editor);
+    }
   });
 
-  // Tab to accept / Escape to dismiss — capture phase to fire before platform handlers
   editor.addEventListener(
     "keydown",
     (e: Event) => {
       const ke = e as KeyboardEvent;
+      if (handleSlashKeydown(ke, editor)) return;
       if (ke.key === "Tab" && ghostAnswer) {
         ke.preventDefault();
         ke.stopPropagation();
@@ -2118,178 +2297,447 @@ chrome.runtime.onMessage.addListener((request) => {
   return undefined;
 });
 
-// ─── Mode Toggle Widget ─────────────────────────────────────────────────
+// ─── Slash Command Detector ──────────────────────────────────────────────
 
-function createModeToggle() {
-  if (modeToggleEl && document.body.contains(modeToggleEl)) return;
-
-  modeToggleEl = document.createElement("div");
-  modeToggleEl.id = "xmem-mode-toggle";
-
-  // Load saved mode and position
-  if (chrome?.storage?.sync) {
-    chrome.storage.sync.get(
-      ["xmem_mode", "xmem_toggle_x", "xmem_toggle_y"],
-      (data) => {
-        if (data.xmem_mode === "ingest" || data.xmem_mode === "search") {
-          xmemMode = data.xmem_mode;
-        }
-        if (modeToggleEl) {
-          const x = data.xmem_toggle_x ?? window.innerWidth - 230;
-          const y = data.xmem_toggle_y ?? 16;
-          modeToggleEl.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
-          modeToggleEl.style.top = `${Math.min(y, window.innerHeight - 60)}px`;
-        }
-        renderToggle();
-      },
-    );
-  } else {
-    modeToggleEl.style.right = "80px";
-    modeToggleEl.style.top = "16px";
-  }
-
-  renderToggle();
-  document.body.appendChild(modeToggleEl);
-  setupDrag(modeToggleEl);
+interface SlashOption {
+  command: string;
+  mode: XMemMode;
+  label: string;
+  desc: string;
+  color: string;
+  icon: string;
 }
 
-function renderToggle() {
-  if (!modeToggleEl) return;
+const SLASH_OPTIONS: SlashOption[] = [
+  {
+    command: "/ingest",
+    mode: "ingest",
+    label: "Ingest",
+    desc: "Save conversations to memory",
+    color: "#7c3aed",
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+  },
+  {
+    command: "/search",
+    mode: "search",
+    label: "Search",
+    desc: "Autocomplete, recall & suggestions",
+    color: "#3b82f6",
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  },
+  {
+    command: "/ide",
+    mode: "ide",
+    label: "IDE",
+    desc: "Browse & query a codebase",
+    color: "#22c55e",
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  },
+];
 
-  const ingestActive = xmemMode === "ingest";
-  const searchActive = xmemMode === "search";
+function getSlashPrefix(editor: HTMLElement): string {
+  const text = readEditorText(editor);
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/")) return "";
+  const spaceIdx = trimmed.indexOf(" ");
+  return spaceIdx === -1 ? trimmed : trimmed.substring(0, spaceIdx);
+}
 
-  const noteText = ingestActive
-    ? "Saves conversations to memory"
-    : "Autocomplete, suggestions & recall";
+function checkSlashCommand(editor: HTMLElement) {
+  const prefix = getSlashPrefix(editor);
+  if (!prefix) {
+    dismissSlashDropdown();
+    return;
+  }
 
-  modeToggleEl.innerHTML = `
-    <div class="xmem-toggle-container">
-      <div class="xmem-toggle-switch">
-        <button class="xmem-toggle-option ${ingestActive ? "active xmem-mode-ingest" : ""}" data-mode="ingest">
-          <span class="xmem-toggle-icon">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 5v14"/><path d="M5 12h14"/>
-            </svg>
-          </span>
-          Ingest
-        </button>
-        <button class="xmem-toggle-option ${searchActive ? "active xmem-mode-search" : ""}" data-mode="search">
-          <span class="xmem-toggle-icon">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-          </span>
-          Search
-        </button>
+  const filtered = SLASH_OPTIONS.filter((o) =>
+    o.command.startsWith(prefix.toLowerCase()),
+  );
+
+  if (filtered.length === 0) {
+    dismissSlashDropdown();
+    return;
+  }
+
+  const caret = getCaretXY(editor);
+  if (!caret) return;
+
+  showSlashDropdown(filtered, caret, editor, prefix);
+}
+
+function showSlashDropdown(
+  options: SlashOption[],
+  caret: CaretXY,
+  editor: HTMLElement,
+  currentPrefix: string,
+) {
+  if (!slashDropdownEl) {
+    slashDropdownEl = document.createElement("div");
+    slashDropdownEl.id = "xmem-slash-dropdown";
+    document.body.appendChild(slashDropdownEl);
+  }
+
+  slashSelectedIdx = Math.min(slashSelectedIdx, options.length - 1);
+
+  slashDropdownEl.innerHTML = options
+    .map(
+      (opt, i) => `
+    <div class="xmem-slash-option ${i === slashSelectedIdx ? "xmem-slash-selected" : ""}" data-mode="${opt.mode}">
+      <div class="xmem-slash-icon" style="color: ${opt.color}">${opt.icon}</div>
+      <div class="xmem-slash-text">
+        <span class="xmem-slash-cmd" style="color: ${opt.color}">${opt.command}</span>
+        <span class="xmem-slash-desc">${opt.desc}</span>
       </div>
-      <div class="xmem-toggle-note">${noteText}</div>
+    </div>`,
+    )
+    .join("");
+
+  slashDropdownEl.style.position = "fixed";
+  slashDropdownEl.style.left = `${caret.x - 8}px`;
+  slashDropdownEl.style.top = `${caret.y + caret.h + 4}px`;
+  slashDropdownEl.style.zIndex = "2147483647";
+  slashDropdownEl.style.display = "block";
+
+  slashDropdownEl.querySelectorAll<HTMLElement>(".xmem-slash-option").forEach((el) => {
+    el.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const mode = el.dataset.mode as XMemMode;
+      if (mode) activateSlashMode(mode, editor, currentPrefix);
+    });
+  });
+}
+
+function dismissSlashDropdown() {
+  if (slashDropdownEl) slashDropdownEl.style.display = "none";
+  slashSelectedIdx = 0;
+}
+
+function handleSlashKeydown(e: KeyboardEvent, editor: HTMLElement): boolean {
+  if (!slashDropdownEl || slashDropdownEl.style.display === "none") return false;
+
+  const prefix = getSlashPrefix(editor);
+  const options = SLASH_OPTIONS.filter((o) =>
+    o.command.startsWith(prefix.toLowerCase()),
+  );
+  if (options.length === 0) return false;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    e.stopPropagation();
+    slashSelectedIdx = (slashSelectedIdx + 1) % options.length;
+    showSlashDropdown(options, getCaretXY(editor)!, editor, prefix);
+    return true;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    e.stopPropagation();
+    slashSelectedIdx = (slashSelectedIdx - 1 + options.length) % options.length;
+    showSlashDropdown(options, getCaretXY(editor)!, editor, prefix);
+    return true;
+  }
+  if (e.key === "Enter" || e.key === "Tab") {
+    e.preventDefault();
+    e.stopPropagation();
+    const selected = options[slashSelectedIdx];
+    if (selected) activateSlashMode(selected.mode, editor, prefix);
+    return true;
+  }
+  if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    dismissSlashDropdown();
+    return true;
+  }
+  return false;
+}
+
+function clearEditorText(editor: HTMLElement) {
+  if (editor instanceof HTMLTextAreaElement) {
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    if (nativeSetter) nativeSetter.call(editor, "");
+    else editor.value = "";
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  } else {
+    editor.focus();
+    document.execCommand("selectAll", false);
+    document.execCommand("delete", false);
+  }
+}
+
+function activateSlashMode(mode: XMemMode, editor: HTMLElement, prefix: string) {
+  dismissSlashDropdown();
+  clearEditorText(editor);
+
+  const prevMode = xmemMode;
+  xmemMode = mode;
+
+  if (chrome?.storage?.sync) {
+    chrome.storage.sync.set({ xmem_mode: xmemMode });
+  }
+
+  if (mode === "ingest" || mode === "ide") {
+    dismissGhost();
+    hideChip();
+    if (activeSidecar) {
+      activeSidecar.remove();
+      activeSidecar = null;
+    }
+  }
+  if (mode === "search") {
+    ensureChip(editor);
+    positionChip(editor);
+    showChip();
+  }
+  if (mode === "ide") {
+    closeIdePanel();
+    openIdePanel();
+  } else if (prevMode === "ide") {
+    closeIdePanel();
+  }
+
+  const labels: Record<XMemMode, string> = {
+    ingest: "Ingest — saving memories",
+    search: "Search — full features",
+    ide: "IDE — codebase browser",
+  };
+  showToast(`Mode: ${labels[mode]}`);
+}
+
+// ─── IDE Panel ────────────────────────────────────────────────────────────
+
+function openIdePanel() {
+  if (idePanelEl && document.body.contains(idePanelEl)) {
+    idePanelEl.style.display = "flex";
+    idePanelOpen = true;
+    return;
+  }
+
+  idePanelEl = document.createElement("div");
+  idePanelEl.id = "xmem-ide-panel";
+
+  if (chrome?.storage?.sync) {
+    chrome.storage.sync.get(["xmem_ide_org_id", "xmem_ide_repo"], (data) => {
+      ideOrgId = data.xmem_ide_org_id || "";
+      ideRepo = data.xmem_ide_repo || "";
+      renderIdePanel();
+    });
+  } else {
+    renderIdePanel();
+  }
+
+  document.body.appendChild(idePanelEl);
+  idePanelOpen = true;
+}
+
+function closeIdePanel() {
+  if (idePanelEl) {
+    idePanelEl.style.display = "none";
+  }
+  idePanelOpen = false;
+}
+
+function renderIdePanel() {
+  if (!idePanelEl) return;
+
+  const isConfigured = ideOrgId && ideRepo;
+
+  idePanelEl.innerHTML = `
+    <div class="xmem-ide-header">
+      <div class="xmem-ide-logo">
+        <div class="xmem-ide-logo-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+          </svg>
+        </div>
+        <span>XMem IDE</span>
+      </div>
+      <button class="xmem-ide-close-btn" title="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="xmem-ide-config">
+      <div class="xmem-ide-field">
+        <label>Org ID</label>
+        <input type="text" id="xmem-ide-org" placeholder="e.g. zinnia" value="${escapeHtml(ideOrgId)}" />
+      </div>
+      <div class="xmem-ide-field">
+        <label>Repository</label>
+        <input type="text" id="xmem-ide-repo" placeholder="e.g. payment-service" value="${escapeHtml(ideRepo)}" />
+      </div>
+      <button class="xmem-ide-load-btn" id="xmem-ide-load">
+        ${isConfigured ? "Reload Tree" : "Load Project"}
+      </button>
+    </div>
+
+    <div class="xmem-ide-tree-container" id="xmem-ide-tree">
+      ${isConfigured && ideTreeData ? renderTreeHTML(ideTreeData) : '<div class="xmem-ide-empty">Enter org &amp; repo, then click Load</div>'}
+    </div>
+
+    <div class="xmem-ide-query-section">
+      <div class="xmem-ide-query-bar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="xmem-ide-query-input" placeholder="Ask about this codebase..." />
+      </div>
+      <div id="xmem-ide-query-result" class="xmem-ide-query-result"></div>
     </div>
   `;
 
-  // Attach click handlers
-  modeToggleEl
-    .querySelectorAll<HTMLElement>(".xmem-toggle-option")
-    .forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const newMode = btn.dataset.mode as XMemMode;
-        if (newMode && newMode !== xmemMode) {
-          xmemMode = newMode;
-          renderToggle();
-
-          // Persist mode
-          if (chrome?.storage?.sync) {
-            chrome.storage.sync.set({ xmem_mode: xmemMode });
-          }
-
-          // Clean up search artifacts when switching to ingest
-          if (xmemMode === "ingest") {
-            dismissGhost();
-            hideChip();
-            if (activeSidecar) {
-              activeSidecar.remove();
-              activeSidecar = null;
-            }
-          } else {
-            // Re-show chip when switching to search
-            const editor = findEditor();
-            if (editor) {
-              ensureChip(editor);
-              positionChip(editor);
-              showChip();
-            }
-          }
-
-          showToast(
-            `Mode: ${xmemMode === "ingest" ? "Ingest ─ saving memories" : "Search ─ full features"}`,
-          );
-        }
-      });
-    });
+  setupIdePanelEvents();
 }
 
-function setupDrag(el: HTMLElement) {
-  let isDragging = false;
-  let dragStartX = 0;
-  let dragStartY = 0;
-  let elStartX = 0;
-  let elStartY = 0;
-  let hasMoved = false;
+function setupIdePanelEvents() {
+  if (!idePanelEl) return;
 
-  el.addEventListener("mousedown", (e: MouseEvent) => {
-    // Only drag from the container, not buttons
-    const target = e.target as HTMLElement;
-    if (target.closest(".xmem-toggle-option")) return;
-
-    isDragging = true;
-    hasMoved = false;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    const rect = el.getBoundingClientRect();
-    elStartX = rect.left;
-    elStartY = rect.top;
-    el.classList.add("xmem-dragging");
-    e.preventDefault();
+  idePanelEl.querySelector(".xmem-ide-close-btn")?.addEventListener("click", () => {
+    closeIdePanel();
+    xmemMode = "search";
+    if (chrome?.storage?.sync) chrome.storage.sync.set({ xmem_mode: "search" });
+    showToast("Mode: Search");
+    const editor = findEditor();
+    if (editor) { ensureChip(editor); positionChip(editor); showChip(); }
   });
 
-  document.addEventListener("mousemove", (e: MouseEvent) => {
-    if (!isDragging) return;
-    const dx = e.clientX - dragStartX;
-    const dy = e.clientY - dragStartY;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+  idePanelEl.querySelector("#xmem-ide-load")?.addEventListener("click", async () => {
+    const orgInput = idePanelEl!.querySelector("#xmem-ide-org") as HTMLInputElement;
+    const repoInput = idePanelEl!.querySelector("#xmem-ide-repo") as HTMLInputElement;
+    ideOrgId = orgInput.value.trim();
+    ideRepo = repoInput.value.trim();
 
-    const newX = Math.max(
-      0,
-      Math.min(elStartX + dx, window.innerWidth - el.offsetWidth),
-    );
-    const newY = Math.max(
-      0,
-      Math.min(elStartY + dy, window.innerHeight - el.offsetHeight),
-    );
+    if (!ideOrgId || !ideRepo) {
+      showToast("Enter both Org ID and Repository", true);
+      return;
+    }
 
-    el.style.left = `${newX}px`;
-    el.style.top = `${newY}px`;
-    el.style.right = "auto";
-  });
+    if (chrome?.storage?.sync) {
+      chrome.storage.sync.set({ xmem_ide_org_id: ideOrgId, xmem_ide_repo: ideRepo });
+    }
 
-  document.addEventListener("mouseup", () => {
-    if (!isDragging) return;
-    isDragging = false;
-    el.classList.remove("xmem-dragging");
+    const treeContainer = idePanelEl!.querySelector("#xmem-ide-tree") as HTMLElement;
+    treeContainer.innerHTML = '<div class="xmem-loader"></div>';
 
-    // Persist position
-    if (hasMoved && chrome?.storage?.sync) {
-      chrome.storage.sync.set({
-        xmem_toggle_x: parseInt(el.style.left),
-        xmem_toggle_y: parseInt(el.style.top),
-      });
+    try {
+      const result = await getDirectoryTree(ideOrgId, ideRepo);
+      ideTreeData = result.tree;
+      treeContainer.innerHTML = renderTreeHTML(ideTreeData);
+      attachTreeToggleListeners(treeContainer);
+    } catch (err) {
+      treeContainer.innerHTML = '<div class="xmem-ide-empty">Failed to load directory tree</div>';
+      console.error("XMem IDE tree error", err);
     }
   });
+
+  const queryInput = idePanelEl.querySelector("#xmem-ide-query-input") as HTMLInputElement;
+  queryInput?.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    const q = queryInput.value.trim();
+    if (!q || !ideOrgId || !ideRepo) return;
+
+    const resultDiv = idePanelEl!.querySelector("#xmem-ide-query-result") as HTMLElement;
+    resultDiv.innerHTML = '<div class="xmem-loader"></div>';
+
+    try {
+      const resp = await queryCode(ideOrgId, ideRepo, q);
+      resultDiv.innerHTML = `
+        <div class="xmem-answer">
+          <div class="xmem-answer-text">${escapeHtml(resp.answer || "No answer generated.")}</div>
+          ${resp.sources?.length ? `<div class="xmem-answer-sources"><span class="xmem-answer-sources-label">${resp.sources.length} source${resp.sources.length > 1 ? "s" : ""}</span></div>` : ""}
+        </div>`;
+    } catch {
+      resultDiv.innerHTML = '<div class="xmem-error">Failed to query codebase.</div>';
+    }
+  });
+
+  idePanelEl.addEventListener("click", (e) => e.stopPropagation());
+
+  const treeContainer = idePanelEl.querySelector("#xmem-ide-tree") as HTMLElement;
+  if (treeContainer && ideTreeData) attachTreeToggleListeners(treeContainer);
+}
+
+function renderTreeHTML(node: DirectoryNode, depth = 0): string {
+  if (node.type === "file") {
+    const ext = node.name.split(".").pop() || "";
+    const iconClass = getFileIconClass(ext);
+    return `<div class="xmem-tree-file" style="padding-left: ${12 + depth * 16}px" data-path="${escapeHtml(node.path)}">
+      <span class="xmem-tree-icon ${iconClass}"></span>
+      <span class="xmem-tree-name">${escapeHtml(node.name)}</span>
+    </div>`;
+  }
+
+  const children = (node.children || [])
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    })
+    .map((c) => renderTreeHTML(c, depth + 1))
+    .join("");
+
+  if (depth === 0) {
+    return `<div class="xmem-tree-dir xmem-tree-open" data-path="${escapeHtml(node.path)}">
+      <div class="xmem-tree-dir-header" style="padding-left: ${12 + depth * 16}px">
+        <span class="xmem-tree-arrow"></span>
+        <span class="xmem-tree-folder-icon"></span>
+        <span class="xmem-tree-name">${escapeHtml(node.name)}</span>
+      </div>
+      <div class="xmem-tree-children">${children}</div>
+    </div>`;
+  }
+
+  return `<div class="xmem-tree-dir" data-path="${escapeHtml(node.path)}">
+    <div class="xmem-tree-dir-header" style="padding-left: ${12 + depth * 16}px">
+      <span class="xmem-tree-arrow"></span>
+      <span class="xmem-tree-folder-icon"></span>
+      <span class="xmem-tree-name">${escapeHtml(node.name)}</span>
+    </div>
+    <div class="xmem-tree-children">${children}</div>
+  </div>`;
+}
+
+function getFileIconClass(ext: string): string {
+  const map: Record<string, string> = {
+    py: "xmem-icon-py", ts: "xmem-icon-ts", tsx: "xmem-icon-ts",
+    js: "xmem-icon-js", jsx: "xmem-icon-js", json: "xmem-icon-json",
+    md: "xmem-icon-md", css: "xmem-icon-css", html: "xmem-icon-html",
+    yaml: "xmem-icon-yaml", yml: "xmem-icon-yaml",
+    java: "xmem-icon-java", go: "xmem-icon-go", rs: "xmem-icon-rs",
+  };
+  return map[ext.toLowerCase()] || "xmem-icon-file";
+}
+
+function attachTreeToggleListeners(container: HTMLElement) {
+  container.querySelectorAll<HTMLElement>(".xmem-tree-dir-header").forEach((header) => {
+    header.addEventListener("click", () => {
+      const dir = header.parentElement;
+      if (dir) dir.classList.toggle("xmem-tree-open");
+    });
+  });
+}
+
+// ─── Load Saved Mode ──────────────────────────────────────────────────────
+
+function loadSavedMode() {
+  if (chrome?.storage?.sync) {
+    chrome.storage.sync.get(["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo"], (data) => {
+      if (data.xmem_mode === "ingest" || data.xmem_mode === "search" || data.xmem_mode === "ide") {
+        xmemMode = data.xmem_mode;
+      }
+      ideOrgId = data.xmem_ide_org_id || "";
+      ideRepo = data.xmem_ide_repo || "";
+      if (xmemMode === "ide") openIdePanel();
+    });
+  }
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────
 
 injectStyles();
 startObserver();
-createModeToggle();
+loadSavedMode();
