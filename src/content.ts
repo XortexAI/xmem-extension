@@ -43,7 +43,7 @@ let cachedResults: SourceRecord[] = [];
 
 // ─── Mode State ───────────────────────────────────────────────────────────
 
-type XMemMode = "ingest" | "search" | "ide";
+type XMemMode = "ingest" | "search" | "ide" | "repo";
 let xmemMode: XMemMode = "search";
 
 // ─── IDE Mode State ───────────────────────────────────────────────────────
@@ -53,6 +53,7 @@ let idePanelOpen = false;
 let ideOrgId = "";
 let ideRepo = "";
 let ideTreeData: DirectoryNode | null = null;
+let bypassContextInjection = false;
 
 // ─── Slash Command State ──────────────────────────────────────────────────
 
@@ -454,21 +455,49 @@ async function runAutocomplete(queryText: string) {
 
 // ─── Auto-save ────────────────────────────────────────────────────────────
 
-function hookSendButtons() {
-  const sendSelectors = [
+function findSendButton(): HTMLButtonElement | null {
+  const sels = [
     'button[data-testid="send-button"]',
     "#composer-submit-button",
     'button[aria-label="Send Message"]',
     'button[aria-label="Send message"]',
     'button[type="submit"]',
   ];
-  for (const sel of sendSelectors) {
+  for (const sel of sels) {
+    const btn = document.querySelector<HTMLButtonElement>(sel);
+    if (btn) return btn;
+  }
+  return null;
+}
+
+function hookSendButtons() {
+  const sels = [
+    'button[data-testid="send-button"]',
+    "#composer-submit-button",
+    'button[aria-label="Send Message"]',
+    'button[aria-label="Send message"]',
+    'button[type="submit"]',
+  ];
+  for (const sel of sels) {
     const btn = document.querySelector<HTMLButtonElement>(sel);
     if (btn && !btn.dataset.xmemHooked) {
       btn.dataset.xmemHooked = "1";
       btn.addEventListener(
         "click",
-        () => {
+        (e) => {
+          if (
+            (xmemMode === "ide" || xmemMode === "search") &&
+            !bypassContextInjection
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            const editor = findEditor();
+            if (editor) injectContextAndSend(editor);
+            return;
+          }
+          if (bypassContextInjection) {
+            bypassContextInjection = false;
+          }
           dismissGhost();
           saveConversation();
         },
@@ -577,21 +606,38 @@ async function saveConversation() {
 }
 
 async function captureLatestAgentResponse(): Promise<string> {
-  // Wait briefly for the AI to start responding
+  // Basic wait for the AI to start generating
   await new Promise((r) => setTimeout(r, 2000));
 
-  const responseNodes = document.querySelectorAll<HTMLElement>(
-    '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
-  );
+  function getLatestNode() {
+    const nodes = document.querySelectorAll<HTMLElement>(
+      '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
+    );
+    return nodes.length > 0 ? nodes[nodes.length - 1] : null;
+  }
 
-  if (responseNodes.length === 0) return "";
+  let node = getLatestNode();
+  if (!node) return "";
+  let text = node.textContent?.trim() || "";
 
-  // Get the last (most recent) assistant response
-  const lastNode = responseNodes[responseNodes.length - 1];
-  const text = lastNode.textContent?.trim() || "";
+  // Wait until the text stops changing (streaming has completed)
+  let stableCount = 0;
+  const maxWaitLoops = 60; // Max 60 seconds of waiting
+  for (let i = 0; i < maxWaitLoops; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    node = getLatestNode();
+    const newText = node?.textContent?.trim() || "";
+    if (newText === text && text.length > 0) {
+      stableCount++;
+      if (stableCount >= 2) break; // Stable for 2 consecutive seconds
+    } else {
+      stableCount = 0;
+    }
+    text = newText;
+  }
 
-  // Return a reasonable chunk (cap at 2000 chars to avoid bloat)
-  return text.length > 2000 ? text.substring(0, 2000) : text;
+  // Return full captured response
+  return text;
 }
 
 // ─── Memory Sidecar ───────────────────────────────────────────────────────
@@ -1098,6 +1144,92 @@ function escapeHtml(text: string): string {
   const d = document.createElement("div");
   d.textContent = text;
   return d.innerHTML;
+}
+
+/**
+ * Lightweight markdown renderer for code agent responses.
+ * Handles: headings, bold, inline code, code blocks, bullet lists, numbered lists, line breaks.
+ */
+function renderMarkdown(md: string): string {
+  // Normalize line endings
+  let html = md.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // Fenced code blocks  ```lang\n...\n```
+  html = html.replace(/```[\w]*\n([\s\S]*?)```/g, (_m, code) => {
+    const escaped = escapeHtml(code.trimEnd());
+    return `<pre class="xmem-md-pre"><code>${escaped}</code></pre>`;
+  });
+
+  // Inline code `...`
+  html = html.replace(
+    /`([^`]+)`/g,
+    (_m, code) => `<code class="xmem-md-code">${escapeHtml(code)}</code>`,
+  );
+
+  // ### Headings
+  html = html.replace(/^### (.+)$/gm, '<h4 class="xmem-md-h">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 class="xmem-md-h">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h2 class="xmem-md-h">$1</h2>');
+
+  // **bold**
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  // *italic*
+  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+  // Process lines for lists and paragraphs
+  const lines = html.split("\n");
+  const out: string[] = [];
+  let inUl = false;
+  let inOl = false;
+
+  for (const line of lines) {
+    const ulMatch = line.match(/^[\*\-] (.+)/);
+    const olMatch = line.match(/^\d+\. (.+)/);
+    const isBlank = line.trim() === "";
+    const isBlock = line.startsWith("<h") || line.startsWith("<pre");
+
+    if (ulMatch) {
+      if (!inUl) {
+        if (inOl) {
+          out.push("</ol>");
+          inOl = false;
+        }
+        out.push('<ul class="xmem-md-ul">');
+        inUl = true;
+      }
+      out.push(`<li>${ulMatch[1]}</li>`);
+    } else if (olMatch) {
+      if (!inOl) {
+        if (inUl) {
+          out.push("</ul>");
+          inUl = false;
+        }
+        out.push('<ol class="xmem-md-ol">');
+        inOl = true;
+      }
+      out.push(`<li>${olMatch[1]}</li>`);
+    } else {
+      if (inUl) {
+        out.push("</ul>");
+        inUl = false;
+      }
+      if (inOl) {
+        out.push("</ol>");
+        inOl = false;
+      }
+      if (isBlank) {
+        out.push("<br>");
+      } else if (isBlock) {
+        out.push(line);
+      } else {
+        out.push(`<p class="xmem-md-p">${line}</p>`);
+      }
+    }
+  }
+  if (inUl) out.push("</ul>");
+  if (inOl) out.push("</ol>");
+
+  return out.join("");
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
@@ -1912,6 +2044,39 @@ function injectStyles() {
       overflow-y: auto;
     }
 
+    /* ═══ Markdown Renderer ═══ */
+    .xmem-md-body { font-size: 13px; line-height: 1.65; color: #d4d4d4; }
+    .xmem-md-body .xmem-md-h { font-weight: 700; color: #fff; margin: 10px 0 4px; }
+    .xmem-md-body h2.xmem-md-h { font-size: 15px; }
+    .xmem-md-body h3.xmem-md-h { font-size: 14px; }
+    .xmem-md-body h4.xmem-md-h { font-size: 13px; }
+    .xmem-md-body .xmem-md-p { margin: 3px 0; }
+    .xmem-md-body .xmem-md-ul,
+    .xmem-md-body .xmem-md-ol { padding-left: 18px; margin: 4px 0; }
+    .xmem-md-body li { margin: 2px 0; }
+    .xmem-md-body .xmem-md-pre {
+      background: #0d0d14;
+      border: 1px solid #2a2a3d;
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #c9d1d9;
+      white-space: pre;
+    }
+    .xmem-md-body .xmem-md-code {
+      background: #1a1a2e;
+      border: 1px solid #2a2a3d;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 11.5px;
+      color: #79c0ff;
+    }
+
     /* ═══ Ingest Status Banner ═══ */
     .xmem-ingest-status {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -2177,6 +2342,248 @@ function dismissHighlightBtn() {
   currentSelectionText = "";
 }
 
+// ─── Context Injection (IDE & Search modes) ──────────────────────────────
+
+function replaceEditorText(editor: HTMLElement, text: string) {
+  if (editor instanceof HTMLTextAreaElement) {
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      "value",
+    )?.set;
+    if (nativeSetter) nativeSetter.call(editor, text);
+    else editor.value = text;
+    editor.selectionStart = editor.selectionEnd = text.length;
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  } else {
+    editor.focus();
+    document.execCommand("selectAll", false);
+    document.execCommand("insertText", false, text);
+  }
+}
+
+/**
+ * Detects file paths and symbol names mentioned in a user query.
+ * Files: anything ending in a known extension, or containing path separators.
+ * Symbols: CamelCase classes, snake_case functions, or _private names.
+ */
+function extractCodeRefs(query: string): {
+  files: string[];
+  symbols: string[];
+} {
+  const files: string[] = [];
+  const symbols: string[] = [];
+
+  // File paths: word.ext or path/to/file.ext
+  const fileRe =
+    /(?:^|\s|["'`(])(([\w.\-/]+\/)*([\w\-]+\.(py|ts|tsx|js|jsx|go|rs|java|cpp|c|h|cs|rb|php|swift|kt|md|yaml|yml|json|toml|sh|env)))/gi;
+  let m: RegExpExecArray | null;
+  while ((m = fileRe.exec(query)) !== null) {
+    const f = m[1].trim();
+    if (!files.includes(f)) files.push(f);
+  }
+
+  // Symbol names: CamelCase (classes), snake_case functions, _private names
+  // But NOT common English words, so require at least one _ or mixed case
+  const symRe =
+    /\b([A-Z][a-zA-Z0-9]{2,}|[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}|_[a-z][a-z0-9_]+)\b/g;
+  const stopWords = new Set([
+    "the",
+    "and",
+    "for",
+    "from",
+    "with",
+    "this",
+    "that",
+    "have",
+    "been",
+    "will",
+    "should",
+    "could",
+    "would",
+    "does",
+    "about",
+    "like",
+    "just",
+    "also",
+    "into",
+    "over",
+    "only",
+    "then",
+    "than",
+    "make",
+    "when",
+    "what",
+    "which",
+    "how",
+    "can",
+    "its",
+    "are",
+    "you",
+    "use",
+    "but",
+    "not",
+    "any",
+    "show",
+    "give",
+    "find",
+    "get",
+    "all",
+    "fix",
+    "see",
+    "help",
+    "error",
+    "file",
+    "code",
+    "class",
+    "function",
+    "method",
+    "test",
+    "bug",
+    "issue",
+    "facing",
+  ]);
+  while ((m = symRe.exec(query)) !== null) {
+    const sym = m[1];
+    if (!stopWords.has(sym.toLowerCase()) && !symbols.includes(sym)) {
+      symbols.push(sym);
+    }
+  }
+
+  return { files, symbols };
+}
+
+async function injectContextAndSend(editor: HTMLElement) {
+  const userQuery = readEditorText(editor).trim();
+  if (!userQuery || userQuery.length < 5) {
+    bypassContextInjection = true;
+    const btn = findSendButton();
+    if (btn) btn.click();
+    return;
+  }
+
+  if (xmemMode === "search") {
+    // Search mode: inject memory context
+    showToast("\u{1F50D} Fetching memories...");
+    let contextText = "";
+    try {
+      const result = await retrieveAnswer(userQuery);
+      contextText = result.answer || "";
+    } catch (err) {
+      console.error("[XMem] Memory fetch failed:", err);
+    }
+    if (contextText) {
+      replaceEditorText(
+        editor,
+        `<xmem_memory_context>\n${contextText}\n</xmem_memory_context>\n\n${userQuery}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 150));
+    bypassContextInjection = true;
+    const btn = findSendButton();
+    if (btn) btn.click();
+    else
+      editor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    return;
+  }
+
+  // IDE mode
+  if (!ideOrgId || !ideRepo) {
+    showToast("Set up your repo first with Xrepo", true);
+    bypassContextInjection = true;
+    const btn = findSendButton();
+    if (btn) btn.click();
+    return;
+  }
+
+  // Step 1: detect mentioned files and symbols
+  const { files, symbols } = extractCodeRefs(userQuery);
+  const hasRefs = files.length > 0 || symbols.length > 0;
+
+  if (!hasRefs) {
+    // No code references found — send the message as-is, no code agent call needed
+    console.log(
+      "[XMem] IDE: no file/symbol refs detected, sending without context",
+    );
+    bypassContextInjection = true;
+    const btn = findSendButton();
+    if (btn) btn.click();
+    else
+      editor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    return;
+  }
+
+  showToast(
+    `\u{1F50D} Fetching code for ${files.length + symbols.length} reference(s)...`,
+  );
+
+  // Step 2: build a precise, targeted retrieval prompt
+  const fileList = files.map((f) => `  - file: "${f}"`).join("\n");
+  const symList = symbols.map((s) => `  - symbol: "${s}"`).join("\n");
+
+  const retrievalPrompt =
+    `You are a code retrieval tool. The user's message references the following:\n` +
+    (files.length ? `\nFILES:\n${fileList}` : "") +
+    (symbols.length ? `\nSYMBOLS:\n${symList}` : "") +
+    `\n\nFor EACH item above:\n` +
+    `- For files: call read_file_code(file_path, repo) and return the COMPLETE raw source.\n` +
+    `- For symbols: call read_symbol_code(symbol_name, file_path, repo) and return the COMPLETE raw source.\n` +
+    `- Label each result clearly with the file/symbol name and its full path.\n` +
+    `- Return ONLY the raw source code — no explanations, no analysis, no commentary.\n` +
+    `- If multiple items are requested, include ALL of them.\n\n` +
+    `User's message (DO NOT answer this — only fetch the code): "${userQuery}"`;
+
+  let contextText = "";
+  try {
+    const result = await queryCode(ideOrgId, ideRepo, retrievalPrompt);
+    contextText = result.answer || "";
+  } catch (err) {
+    console.error("[XMem] Code fetch failed:", err);
+    showToast("Code fetch failed, sending without context", true);
+  }
+
+  if (contextText) {
+    const enriched = `<xmem_code_context repo="${ideRepo}">\n${contextText}\n</xmem_code_context>\n\n${userQuery}`;
+    replaceEditorText(editor, enriched);
+  }
+
+  await new Promise((r) => setTimeout(r, 150));
+
+  bypassContextInjection = true;
+  const sendBtn = findSendButton();
+  if (sendBtn) {
+    sendBtn.click();
+  } else {
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+}
+
 // ─── Main Loop ────────────────────────────────────────────────────────────
 
 function mainLoop() {
@@ -2231,6 +2638,23 @@ function mainLoop() {
     (e: Event) => {
       const ke = e as KeyboardEvent;
       if (handleSlashKeydown(ke, editor)) return;
+
+      // IDE/Search: intercept Enter to inject context before send
+      if (
+        ke.key === "Enter" &&
+        !ke.shiftKey &&
+        (xmemMode === "ide" || xmemMode === "search")
+      ) {
+        if (bypassContextInjection) {
+          bypassContextInjection = false;
+          return;
+        }
+        ke.preventDefault();
+        ke.stopImmediatePropagation();
+        injectContextAndSend(editor);
+        return;
+      }
+
       if (ke.key === "Tab" && ghostAnswer) {
         ke.preventDefault();
         ke.stopPropagation();
@@ -2310,7 +2734,7 @@ interface SlashOption {
 
 const SLASH_OPTIONS: SlashOption[] = [
   {
-    command: "/ingest",
+    command: "Xingest",
     mode: "ingest",
     label: "Ingest",
     desc: "Save conversations to memory",
@@ -2318,27 +2742,35 @@ const SLASH_OPTIONS: SlashOption[] = [
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
   },
   {
-    command: "/search",
+    command: "Xsearch",
     mode: "search",
     label: "Search",
-    desc: "Autocomplete, recall & suggestions",
+    desc: "Auto-inject memory context on send",
     color: "#3b82f6",
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   },
   {
-    command: "/ide",
+    command: "Xide",
     mode: "ide",
     label: "IDE",
-    desc: "Browse & query a codebase",
+    desc: "Auto-inject code context on send",
     color: "#22c55e",
     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  },
+  {
+    command: "Xrepo",
+    mode: "repo",
+    label: "Repo Tree",
+    desc: "Browse & query codebase structure",
+    color: "#f59e0b",
+    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
   },
 ];
 
 function getSlashPrefix(editor: HTMLElement): string {
   const text = readEditorText(editor);
   const trimmed = text.trimStart();
-  if (!trimmed.startsWith("/")) return "";
+  if (!trimmed.startsWith("X")) return "";
   const spaceIdx = trimmed.indexOf(" ");
   return spaceIdx === -1 ? trimmed : trimmed.substring(0, spaceIdx);
 }
@@ -2350,9 +2782,7 @@ function checkSlashCommand(editor: HTMLElement) {
     return;
   }
 
-  const filtered = SLASH_OPTIONS.filter((o) =>
-    o.command.startsWith(prefix.toLowerCase()),
-  );
+  const filtered = SLASH_OPTIONS.filter((o) => o.command.startsWith(prefix));
 
   if (filtered.length === 0) {
     dismissSlashDropdown();
@@ -2393,19 +2823,34 @@ function showSlashDropdown(
     .join("");
 
   slashDropdownEl.style.position = "fixed";
-  slashDropdownEl.style.left = `${caret.x - 8}px`;
-  slashDropdownEl.style.top = `${caret.y + caret.h + 4}px`;
+  slashDropdownEl.style.left = `${Math.max(8, caret.x - 8)}px`;
   slashDropdownEl.style.zIndex = "2147483647";
+  // Show off-screen first to measure height, then position properly
+  slashDropdownEl.style.top = "-9999px";
   slashDropdownEl.style.display = "block";
 
-  slashDropdownEl.querySelectorAll<HTMLElement>(".xmem-slash-option").forEach((el) => {
-    el.addEventListener("mousedown", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const mode = el.dataset.mode as XMemMode;
-      if (mode) activateSlashMode(mode, editor, currentPrefix);
+  const dropH = slashDropdownEl.offsetHeight || options.length * 52;
+  const spaceBelow = window.innerHeight - (caret.y + caret.h);
+  const spaceAbove = caret.y;
+
+  if (spaceBelow >= dropH + 8 || spaceAbove < dropH + 8) {
+    // Enough space below, OR not enough space above either — show below
+    slashDropdownEl.style.top = `${caret.y + caret.h + 4}px`;
+  } else {
+    // Not enough space below — flip above the caret
+    slashDropdownEl.style.top = `${caret.y - dropH - 4}px`;
+  }
+
+  slashDropdownEl
+    .querySelectorAll<HTMLElement>(".xmem-slash-option")
+    .forEach((el) => {
+      el.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const mode = el.dataset.mode as XMemMode;
+        if (mode) activateSlashMode(mode, editor, currentPrefix);
+      });
     });
-  });
 }
 
 function dismissSlashDropdown() {
@@ -2414,12 +2859,11 @@ function dismissSlashDropdown() {
 }
 
 function handleSlashKeydown(e: KeyboardEvent, editor: HTMLElement): boolean {
-  if (!slashDropdownEl || slashDropdownEl.style.display === "none") return false;
+  if (!slashDropdownEl || slashDropdownEl.style.display === "none")
+    return false;
 
   const prefix = getSlashPrefix(editor);
-  const options = SLASH_OPTIONS.filter((o) =>
-    o.command.startsWith(prefix.toLowerCase()),
-  );
+  const options = SLASH_OPTIONS.filter((o) => o.command.startsWith(prefix));
   if (options.length === 0) return false;
 
   if (e.key === "ArrowDown") {
@@ -2468,7 +2912,11 @@ function clearEditorText(editor: HTMLElement) {
   }
 }
 
-function activateSlashMode(mode: XMemMode, editor: HTMLElement, prefix: string) {
+function activateSlashMode(
+  mode: XMemMode,
+  editor: HTMLElement,
+  prefix: string,
+) {
   dismissSlashDropdown();
   clearEditorText(editor);
 
@@ -2479,7 +2927,8 @@ function activateSlashMode(mode: XMemMode, editor: HTMLElement, prefix: string) 
     chrome.storage.sync.set({ xmem_mode: xmemMode });
   }
 
-  if (mode === "ingest" || mode === "ide") {
+  // Cleanup ghost/chip/sidecar for non-search modes
+  if (mode !== "search") {
     dismissGhost();
     hideChip();
     if (activeSidecar) {
@@ -2487,22 +2936,40 @@ function activateSlashMode(mode: XMemMode, editor: HTMLElement, prefix: string) 
       activeSidecar = null;
     }
   }
+
+  // Close ide panel if leaving repo mode
+  if (prevMode === "repo") closeIdePanel();
+
   if (mode === "search") {
     ensureChip(editor);
     positionChip(editor);
     showChip();
-  }
-  if (mode === "ide") {
+    closeIdePanel();
+  } else if (mode === "repo") {
+    // Repo tree: open the left panel for browsing/query
     closeIdePanel();
     openIdePanel();
-  } else if (prevMode === "ide") {
+  } else if (mode === "ide") {
+    // IDE: context injection mode — panel stays closed, we intercept send
+    closeIdePanel();
+    if (chrome?.storage?.sync) {
+      chrome.storage.sync.get(["xmem_ide_org_id", "xmem_ide_repo"], (data) => {
+        ideOrgId = data.xmem_ide_org_id || "";
+        ideRepo = data.xmem_ide_repo || "";
+        if (!ideOrgId || !ideRepo) {
+          showToast("Tip: use /repo to set up your codebase first", true);
+        }
+      });
+    }
+  } else if (mode === "ingest") {
     closeIdePanel();
   }
 
   const labels: Record<XMemMode, string> = {
-    ingest: "Ingest — saving memories",
-    search: "Search — full features",
-    ide: "IDE — codebase browser",
+    ingest: "Ingest \u2014 saving memories",
+    search: "Search \u2014 auto-injects memory context",
+    ide: "IDE \u2014 auto-injects code context on send",
+    repo: "Repo Tree \u2014 browse & query codebase",
   };
   showToast(`Mode: ${labels[mode]}`);
 }
@@ -2597,68 +3064,95 @@ function renderIdePanel() {
 function setupIdePanelEvents() {
   if (!idePanelEl) return;
 
-  idePanelEl.querySelector(".xmem-ide-close-btn")?.addEventListener("click", () => {
-    closeIdePanel();
-    xmemMode = "search";
-    if (chrome?.storage?.sync) chrome.storage.sync.set({ xmem_mode: "search" });
-    showToast("Mode: Search");
-    const editor = findEditor();
-    if (editor) { ensureChip(editor); positionChip(editor); showChip(); }
-  });
+  idePanelEl
+    .querySelector(".xmem-ide-close-btn")
+    ?.addEventListener("click", () => {
+      closeIdePanel();
+      xmemMode = "search";
+      if (chrome?.storage?.sync)
+        chrome.storage.sync.set({ xmem_mode: "search" });
+      showToast("Mode: Search");
+      const editor = findEditor();
+      if (editor) {
+        ensureChip(editor);
+        positionChip(editor);
+        showChip();
+      }
+    });
 
-  idePanelEl.querySelector("#xmem-ide-load")?.addEventListener("click", async () => {
-    const orgInput = idePanelEl!.querySelector("#xmem-ide-org") as HTMLInputElement;
-    const repoInput = idePanelEl!.querySelector("#xmem-ide-repo") as HTMLInputElement;
-    ideOrgId = orgInput.value.trim();
-    ideRepo = repoInput.value.trim();
+  idePanelEl
+    .querySelector("#xmem-ide-load")
+    ?.addEventListener("click", async () => {
+      const orgInput = idePanelEl!.querySelector(
+        "#xmem-ide-org",
+      ) as HTMLInputElement;
+      const repoInput = idePanelEl!.querySelector(
+        "#xmem-ide-repo",
+      ) as HTMLInputElement;
+      ideOrgId = orgInput.value.trim();
+      ideRepo = repoInput.value.trim();
 
-    if (!ideOrgId || !ideRepo) {
-      showToast("Enter both Org ID and Repository", true);
-      return;
-    }
+      if (!ideOrgId || !ideRepo) {
+        showToast("Enter both Org ID and Repository", true);
+        return;
+      }
 
-    if (chrome?.storage?.sync) {
-      chrome.storage.sync.set({ xmem_ide_org_id: ideOrgId, xmem_ide_repo: ideRepo });
-    }
+      if (chrome?.storage?.sync) {
+        chrome.storage.sync.set({
+          xmem_ide_org_id: ideOrgId,
+          xmem_ide_repo: ideRepo,
+        });
+      }
 
-    const treeContainer = idePanelEl!.querySelector("#xmem-ide-tree") as HTMLElement;
-    treeContainer.innerHTML = '<div class="xmem-loader"></div>';
+      const treeContainer = idePanelEl!.querySelector(
+        "#xmem-ide-tree",
+      ) as HTMLElement;
+      treeContainer.innerHTML = '<div class="xmem-loader"></div>';
 
-    try {
-      const result = await getDirectoryTree(ideOrgId, ideRepo);
-      ideTreeData = result.tree;
-      treeContainer.innerHTML = renderTreeHTML(ideTreeData);
-      attachTreeToggleListeners(treeContainer);
-    } catch (err) {
-      treeContainer.innerHTML = '<div class="xmem-ide-empty">Failed to load directory tree</div>';
-      console.error("XMem IDE tree error", err);
-    }
-  });
+      try {
+        const result = await getDirectoryTree(ideOrgId, ideRepo);
+        ideTreeData = result.tree;
+        treeContainer.innerHTML = renderTreeHTML(ideTreeData);
+        attachTreeToggleListeners(treeContainer);
+      } catch (err) {
+        treeContainer.innerHTML =
+          '<div class="xmem-ide-empty">Failed to load directory tree</div>';
+        console.error("XMem IDE tree error", err);
+      }
+    });
 
-  const queryInput = idePanelEl.querySelector("#xmem-ide-query-input") as HTMLInputElement;
+  const queryInput = idePanelEl.querySelector(
+    "#xmem-ide-query-input",
+  ) as HTMLInputElement;
   queryInput?.addEventListener("keydown", async (e) => {
     if (e.key !== "Enter") return;
     const q = queryInput.value.trim();
     if (!q || !ideOrgId || !ideRepo) return;
 
-    const resultDiv = idePanelEl!.querySelector("#xmem-ide-query-result") as HTMLElement;
+    const resultDiv = idePanelEl!.querySelector(
+      "#xmem-ide-query-result",
+    ) as HTMLElement;
     resultDiv.innerHTML = '<div class="xmem-loader"></div>';
 
     try {
       const resp = await queryCode(ideOrgId, ideRepo, q);
+      const answerText = resp.answer || "No answer generated.";
       resultDiv.innerHTML = `
         <div class="xmem-answer">
-          <div class="xmem-answer-text">${escapeHtml(resp.answer || "No answer generated.")}</div>
+          <div class="xmem-answer-text xmem-md-body">${renderMarkdown(answerText)}</div>
           ${resp.sources?.length ? `<div class="xmem-answer-sources"><span class="xmem-answer-sources-label">${resp.sources.length} source${resp.sources.length > 1 ? "s" : ""}</span></div>` : ""}
         </div>`;
     } catch {
-      resultDiv.innerHTML = '<div class="xmem-error">Failed to query codebase.</div>';
+      resultDiv.innerHTML =
+        '<div class="xmem-error">Failed to query codebase.</div>';
     }
   });
 
   idePanelEl.addEventListener("click", (e) => e.stopPropagation());
 
-  const treeContainer = idePanelEl.querySelector("#xmem-ide-tree") as HTMLElement;
+  const treeContainer = idePanelEl.querySelector(
+    "#xmem-ide-tree",
+  ) as HTMLElement;
   if (treeContainer && ideTreeData) attachTreeToggleListeners(treeContainer);
 }
 
@@ -2703,36 +3197,55 @@ function renderTreeHTML(node: DirectoryNode, depth = 0): string {
 
 function getFileIconClass(ext: string): string {
   const map: Record<string, string> = {
-    py: "xmem-icon-py", ts: "xmem-icon-ts", tsx: "xmem-icon-ts",
-    js: "xmem-icon-js", jsx: "xmem-icon-js", json: "xmem-icon-json",
-    md: "xmem-icon-md", css: "xmem-icon-css", html: "xmem-icon-html",
-    yaml: "xmem-icon-yaml", yml: "xmem-icon-yaml",
-    java: "xmem-icon-java", go: "xmem-icon-go", rs: "xmem-icon-rs",
+    py: "xmem-icon-py",
+    ts: "xmem-icon-ts",
+    tsx: "xmem-icon-ts",
+    js: "xmem-icon-js",
+    jsx: "xmem-icon-js",
+    json: "xmem-icon-json",
+    md: "xmem-icon-md",
+    css: "xmem-icon-css",
+    html: "xmem-icon-html",
+    yaml: "xmem-icon-yaml",
+    yml: "xmem-icon-yaml",
+    java: "xmem-icon-java",
+    go: "xmem-icon-go",
+    rs: "xmem-icon-rs",
   };
   return map[ext.toLowerCase()] || "xmem-icon-file";
 }
 
 function attachTreeToggleListeners(container: HTMLElement) {
-  container.querySelectorAll<HTMLElement>(".xmem-tree-dir-header").forEach((header) => {
-    header.addEventListener("click", () => {
-      const dir = header.parentElement;
-      if (dir) dir.classList.toggle("xmem-tree-open");
+  container
+    .querySelectorAll<HTMLElement>(".xmem-tree-dir-header")
+    .forEach((header) => {
+      header.addEventListener("click", () => {
+        const dir = header.parentElement;
+        if (dir) dir.classList.toggle("xmem-tree-open");
+      });
     });
-  });
 }
 
 // ─── Load Saved Mode ──────────────────────────────────────────────────────
 
 function loadSavedMode() {
   if (chrome?.storage?.sync) {
-    chrome.storage.sync.get(["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo"], (data) => {
-      if (data.xmem_mode === "ingest" || data.xmem_mode === "search" || data.xmem_mode === "ide") {
-        xmemMode = data.xmem_mode;
-      }
-      ideOrgId = data.xmem_ide_org_id || "";
-      ideRepo = data.xmem_ide_repo || "";
-      if (xmemMode === "ide") openIdePanel();
-    });
+    chrome.storage.sync.get(
+      ["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo"],
+      (data) => {
+        if (
+          data.xmem_mode === "ingest" ||
+          data.xmem_mode === "search" ||
+          data.xmem_mode === "ide" ||
+          data.xmem_mode === "repo"
+        ) {
+          xmemMode = data.xmem_mode;
+        }
+        ideOrgId = data.xmem_ide_org_id || "";
+        ideRepo = data.xmem_ide_repo || "";
+        if (xmemMode === "repo") openIdePanel();
+      },
+    );
   }
 }
 
