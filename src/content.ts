@@ -292,12 +292,23 @@ function showGhost(
       ? answer.slice(0, MAX_GHOST_CHARS).trimEnd() + "…"
       : answer;
 
+  const currentText = readEditorText(editor);
+  const endsWithSpace = /[\s\n]$/.test(currentText);
+  const startsWithPunctuation = /^[.,?!:;]/.test(answer);
+  
+  let prefix = "";
+  if (currentText.endsWith("?")) {
+    prefix = "  ⏎  "; // visual indicator of a newline answer
+  } else if (!endsWithSpace && !startsWithPunctuation && currentText.length > 0) {
+    prefix = " ";
+  }
+
   ghostEl = document.createElement("div");
   ghostEl.className = `xmem-ghost ${isDarkBackground(editor) ? "xmem-dark" : "xmem-light"}`;
 
   const textSpan = document.createElement("span");
   textSpan.className = "xmem-ghost-text";
-  textSpan.textContent = `  ${display}`;
+  textSpan.textContent = `${prefix}${display}`;
   ghostEl.appendChild(textSpan);
 
   const tabBadge = document.createElement("span");
@@ -364,7 +375,18 @@ function acceptGhost(): boolean {
   const editor = findEditor();
   if (!editor) return false;
 
-  insertTextIntoEditor(editor, `\n${ghostAnswer}`);
+  const currentText = readEditorText(editor);
+  const endsWithSpace = /[\s\n]$/.test(currentText);
+  const startsWithPunctuation = /^[.,?!:;]/.test(ghostAnswer);
+  
+  let prefix = "";
+  if (currentText.endsWith("?")) {
+    prefix = "\n\n";
+  } else if (!endsWithSpace && !startsWithPunctuation && currentText.length > 0) {
+    prefix = " ";
+  }
+
+  insertTextIntoEditor(editor, `${prefix}${ghostAnswer}`);
   dismissGhost();
   showToast("Memory context added");
   return true;
