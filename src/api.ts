@@ -248,6 +248,59 @@ export async function queryCode(
   });
 }
 
+export async function streamCodeQuery(
+  orgId: string,
+  repo: string,
+  query: string,
+  onChunk: (chunk: any) => void,
+  opts: { topK?: number } = {},
+): Promise<void> {
+  const config = await getConfig();
+  const url = `${config.apiUrl}/v1/code/query_stream`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`
+    },
+    body: JSON.stringify({
+      org_id: orgId,
+      repo,
+      query,
+      user_id: config.userId,
+      top_k: opts.topK || 10
+    })
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Stream failed with status ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const data = JSON.parse(line);
+        onChunk(data);
+      } catch (e) {
+        console.error("Failed to parse stream line:", line);
+      }
+    }
+  }
+}
+
 export async function getDirectoryTree(
   orgId: string,
   repo: string,

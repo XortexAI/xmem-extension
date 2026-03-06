@@ -12,6 +12,7 @@ import {
   searchMemories,
   ingestMemory,
   queryCode,
+  streamCodeQuery,
   getDirectoryTree,
   listRepos,
   type SourceRecord,
@@ -291,12 +292,23 @@ function showGhost(
       ? answer.slice(0, MAX_GHOST_CHARS).trimEnd() + "…"
       : answer;
 
+  const currentText = readEditorText(editor);
+  const endsWithSpace = /[\s\n]$/.test(currentText);
+  const startsWithPunctuation = /^[.,?!:;]/.test(answer);
+  
+  let prefix = "";
+  if (currentText.endsWith("?")) {
+    prefix = "  ⏎  "; // visual indicator of a newline answer
+  } else if (!endsWithSpace && !startsWithPunctuation && currentText.length > 0) {
+    prefix = " ";
+  }
+
   ghostEl = document.createElement("div");
   ghostEl.className = `xmem-ghost ${isDarkBackground(editor) ? "xmem-dark" : "xmem-light"}`;
 
   const textSpan = document.createElement("span");
   textSpan.className = "xmem-ghost-text";
-  textSpan.textContent = `  ${display}`;
+  textSpan.textContent = `${prefix}${display}`;
   ghostEl.appendChild(textSpan);
 
   const tabBadge = document.createElement("span");
@@ -363,7 +375,18 @@ function acceptGhost(): boolean {
   const editor = findEditor();
   if (!editor) return false;
 
-  insertTextIntoEditor(editor, `\n${ghostAnswer}`);
+  const currentText = readEditorText(editor);
+  const endsWithSpace = /[\s\n]$/.test(currentText);
+  const startsWithPunctuation = /^[.,?!:;]/.test(ghostAnswer);
+  
+  let prefix = "";
+  if (currentText.endsWith("?")) {
+    prefix = "\n\n";
+  } else if (!endsWithSpace && !startsWithPunctuation && currentText.length > 0) {
+    prefix = " ";
+  }
+
+  insertTextIntoEditor(editor, `${prefix}${ghostAnswer}`);
   dismissGhost();
   showToast("Memory context added");
   return true;
@@ -1128,7 +1151,8 @@ function showToast(msg: string, isError = false) {
   document.getElementById("xmem-toast")?.remove();
   const toast = document.createElement("div");
   toast.id = "xmem-toast";
-  toast.className = isError ? "xmem-toast-error" : "xmem-toast-success";
+  const lightMode = !isDarkBackground(document.body);
+  toast.className = `${isError ? "xmem-toast-error" : "xmem-toast-success"}${lightMode ? " xmem-toast-light" : ""}`;
   toast.textContent = msg;
   document.body.appendChild(toast);
   requestAnimationFrame(() => toast.classList.add("xmem-toast-visible"));
@@ -1298,8 +1322,10 @@ function injectStyles() {
       pointer-events: none;
     }
     #xmem-toast.xmem-toast-visible { opacity: 1; transform: translateX(-50%) translateY(0); }
-    .xmem-toast-success { background: #22c55e20; color: #4ade80; border: 1px solid #22c55e40; }
+    .xmem-toast-success { background: rgba(161,161,170,0.06); color: #d4d4d8; border: 1px solid rgba(161,161,170,0.15); }
     .xmem-toast-error { background: #ef444420; color: #f87171; border: 1px solid #ef444440; }
+    .xmem-toast-light.xmem-toast-success { background: #ffffff; color: #27272a; border: 1px solid #e4e4e7; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+    .xmem-toast-light.xmem-toast-error { background: #fff5f5; color: #dc2626; border: 1px solid #fecaca; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
 
     /* ═══ Chip ═══ */
     #xmem-chip {
@@ -1709,20 +1735,20 @@ function injectStyles() {
     .xmem-ask-btn:active { transform: scale(0.98); }
     .xmem-ask-result { min-height: 24px; }
     .xmem-answer {
-      padding: 14px; background: rgba(255, 255, 255, 0.02);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-left: 3px solid #7c3aed;
-      border-radius: 10px;
+      padding: 16px; background: rgba(255, 255, 255, 0.015);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-left: 2px solid rgba(161,161,170,0.25);
+      border-radius: 6px;
       animation: xmem-fade-in 0.3s ease;
     }
-    .xmem-answer-text { font-size: 13px; line-height: 1.6; color: #d4d4d8; }
-    .xmem-answer-sources { margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.04); padding-top: 10px; }
-    .xmem-answer-sources-label { font-size: 10px; color: #52525b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+    .xmem-answer-text { font-size: 13px; line-height: 1.7; color: #c4c4cc; }
+    .xmem-answer-sources { margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.04); padding-top: 10px; }
+    .xmem-answer-sources-label { font-size: 10px; color: #3f3f46; font-weight: 500; text-transform: uppercase; letter-spacing: 0.8px; font-style: italic; }
     .xmem-source-item {
       display: flex; align-items: flex-start; gap: 6px;
-      margin-top: 6px; font-size: 12px; color: #71717a;
+      margin-top: 6px; font-size: 12px; color: #52525b;
     }
-    .xmem-error { color: #f87171; font-size: 13px; padding: 12px; background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.15); border-radius: 8px; }
+    .xmem-error { color: #a1a1aa; font-size: 12px; padding: 14px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255,255,255,0.06); border-radius: 5px; font-style: italic; }
 
     /* Footer */
     .xmem-sb-footer {
@@ -1743,12 +1769,47 @@ function injectStyles() {
     }
 
     .xmem-loader {
-      width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.06);
-      border-top-color: #7c3aed; border-radius: 50%;
+      width: 18px; height: 18px; border: 1.5px solid rgba(255,255,255,0.06);
+      border-top-color: #71717a; border-radius: 50%;
       animation: xmem-spin 0.8s linear infinite;
       margin: 20px auto;
     }
     @keyframes xmem-spin { to { transform: rotate(360deg); } }
+
+    /* ═══ Context Injection Overlay ═══ */
+    .xmem-inject-overlay {
+      position: fixed;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 2147483647;
+      pointer-events: none;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 12px;
+      font-style: italic;
+      color: #71717a;
+      letter-spacing: 0.2px;
+      animation: xmem-fade-in 0.15s ease;
+      white-space: nowrap;
+    }
+    .xmem-inject-overlay .xmem-inject-dot {
+      width: 3.5px; height: 3.5px;
+      border-radius: 50%;
+      background: #71717a;
+      animation: xmem-inject-pulse 1.2s ease-in-out infinite;
+    }
+    .xmem-inject-overlay .xmem-inject-dot:nth-child(2) { animation-delay: 0.2s; }
+    .xmem-inject-overlay .xmem-inject-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes xmem-inject-pulse {
+      0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+      40% { opacity: 1; transform: scale(1.1); }
+    }
+    .xmem-inject-overlay.xmem-inject-light {
+      color: #a1a1aa;
+    }
+    .xmem-inject-overlay.xmem-inject-light .xmem-inject-dot {
+      background: #a1a1aa;
+    }
 
     /* ═══ Highlight Button ═══ */
     .xmem-highlight-btn {
@@ -1797,63 +1858,86 @@ function injectStyles() {
     #xmem-slash-dropdown {
       font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       display: none;
-      background: #18181b;
-      border: 1px solid #3f3f46;
-      border-radius: 10px;
+      background: #141416;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px;
       padding: 4px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-      min-width: 260px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.45), 0 1px 3px rgba(0,0,0,0.2);
+      min-width: 240px;
       animation: xmem-fade-in 0.15s ease;
+      backdrop-filter: blur(16px);
     }
     .xmem-slash-option {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 12px;
-      border-radius: 8px;
+      padding: 9px 12px;
+      border-radius: 6px;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.12s ease;
     }
     .xmem-slash-option:hover,
     .xmem-slash-option.xmem-slash-selected {
-      background: rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.055);
     }
     .xmem-slash-icon {
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 28px; height: 28px;
-      border-radius: 6px;
+      width: 26px; height: 26px;
+      border-radius: 5px;
       background: rgba(255,255,255,0.04);
+      color: #a1a1aa;
       flex-shrink: 0;
     }
     .xmem-slash-text {
       display: flex;
       flex-direction: column;
-      gap: 1px;
+      gap: 2px;
     }
     .xmem-slash-cmd {
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.2px;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12.5px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      color: #e4e4e7;
     }
     .xmem-slash-desc {
       font-size: 11px;
+      font-style: italic;
+      color: #63636e;
+      letter-spacing: 0.1px;
+    }
+
+    /* ═══ Slash Dropdown — Light Theme ═══ */
+    #xmem-slash-dropdown.xmem-slash-light {
+      background: #ffffff;
+      border-color: #e4e4e7;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .xmem-slash-light .xmem-slash-option:hover,
+    .xmem-slash-light .xmem-slash-option.xmem-slash-selected {
+      background: rgba(0,0,0,0.04);
+    }
+    .xmem-slash-light .xmem-slash-icon {
+      background: #f4f4f5;
       color: #71717a;
     }
+    .xmem-slash-light .xmem-slash-cmd { color: #27272a; }
+    .xmem-slash-light .xmem-slash-desc { color: #a1a1aa; }
 
     /* ═══ IDE Panel ═══ */
     #xmem-ide-panel {
       font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       position: fixed;
       top: 0; right: 0;
-      width: 340px; height: 100vh;
-      background: #0c0c0e;
-      border-left: 1px solid rgba(255,255,255,0.06);
+      width: 360px; height: 100vh;
+      background: #111113;
+      border-left: 1px solid rgba(255,255,255,0.07);
       z-index: 2147483646;
       display: flex;
       flex-direction: column;
-      box-shadow: -8px 0 40px rgba(0,0,0,0.5);
+      box-shadow: -4px 0 32px rgba(0,0,0,0.45);
       color: #d4d4d8;
       animation: xmem-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
@@ -1861,81 +1945,98 @@ function injectStyles() {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 14px 16px;
+      padding: 16px 18px;
       border-bottom: 1px solid rgba(255,255,255,0.06);
       flex-shrink: 0;
     }
     .xmem-ide-logo {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 700; color: #fff;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; font-weight: 500; color: #a1a1aa;
+      letter-spacing: 0.3px;
     }
     .xmem-ide-logo-icon {
-      width: 26px; height: 26px;
-      background: linear-gradient(135deg, #22c55e, #16a34a);
+      width: 24px; height: 24px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
       border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 2px 8px rgba(34,197,94,0.3);
+    }
+    .xmem-ide-logo span {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-style: italic;
+      font-weight: 500;
+      color: #e4e4e7;
+      font-size: 13px;
     }
     .xmem-ide-close-btn {
-      background: none; border: none; color: #52525b;
-      cursor: pointer; padding: 4px; border-radius: 6px;
-      display: flex; align-items: center; transition: all 0.2s;
+      background: none; border: none; color: #3f3f46;
+      cursor: pointer; padding: 5px; border-radius: 5px;
+      display: flex; align-items: center; transition: all 0.15s;
     }
-    .xmem-ide-close-btn:hover { color: #a1a1aa; background: rgba(255,255,255,0.05); }
+    .xmem-ide-close-btn:hover { color: #71717a; background: rgba(255,255,255,0.04); }
 
     .xmem-ide-config {
-      padding: 12px 16px;
-      border-bottom: 1px solid rgba(255,255,255,0.04);
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 10px;
       flex-shrink: 0;
     }
     .xmem-ide-field label {
       display: block;
-      font-size: 10px; font-weight: 600; color: #52525b;
-      text-transform: uppercase; letter-spacing: 0.6px;
-      margin-bottom: 4px;
+      font-size: 10px; font-weight: 500; color: #8b8b95;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin-bottom: 5px;
+      font-style: italic;
     }
     .xmem-ide-field input {
       width: 100%;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
-      color: #e4e4e7;
-      padding: 7px 10px;
+      background: rgba(255,255,255,0.025);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 5px;
+      color: #d4d4d8;
+      padding: 8px 11px;
       font-size: 12px;
-      font-family: inherit;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+      transition: border-color 0.15s;
     }
     .xmem-ide-field input:focus {
       outline: none;
-      border-color: rgba(34,197,94,0.4);
+      border-color: rgba(161,161,170,0.3);
     }
-    .xmem-ide-field input::placeholder { color: #3f3f46; }
+    .xmem-ide-field input::placeholder { color: #52525b; }
     .xmem-ide-load-btn {
-      background: #22c55e; color: #fff;
-      border: none; border-radius: 6px;
+      background: rgba(255,255,255,0.07);
+      color: #d4d4d8;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 5px;
       padding: 8px 16px;
-      font-size: 12px; font-weight: 600;
+      font-size: 11.5px; font-weight: 500;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.15s;
+      letter-spacing: 0.2px;
     }
-    .xmem-ide-load-btn:hover { background: #16a34a; }
+    .xmem-ide-load-btn:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.15);
+    }
 
     .xmem-ide-tree-container {
       flex: 1;
       overflow-y: auto;
-      padding: 8px 0;
+      padding: 6px 0;
       scrollbar-width: thin;
-      scrollbar-color: rgba(255,255,255,0.06) transparent;
+      scrollbar-color: rgba(255,255,255,0.05) transparent;
     }
-    .xmem-ide-tree-container::-webkit-scrollbar { width: 4px; }
-    .xmem-ide-tree-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 4px; }
+    .xmem-ide-tree-container::-webkit-scrollbar { width: 3px; }
+    .xmem-ide-tree-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
     .xmem-ide-empty {
       text-align: center;
-      padding: 40px 20px;
-      color: #3f3f46;
+      padding: 48px 24px;
+      color: #71717a;
       font-size: 12px;
+      font-style: italic;
     }
 
     /* Directory tree nodes */
@@ -1943,22 +2044,22 @@ function injectStyles() {
       display: flex;
       align-items: center;
       gap: 4px;
-      padding: 3px 8px;
+      padding: 4px 10px;
       cursor: pointer;
-      border-radius: 4px;
+      border-radius: 3px;
       transition: background 0.1s;
       user-select: none;
     }
-    .xmem-tree-dir-header:hover { background: rgba(255,255,255,0.04); }
+    .xmem-tree-dir-header:hover { background: rgba(255,255,255,0.035); }
     .xmem-tree-arrow {
       width: 14px; height: 14px;
       display: inline-flex; align-items: center; justify-content: center;
-      font-size: 10px; color: #52525b;
+      font-size: 9px; color: #71717a;
       transition: transform 0.15s;
       flex-shrink: 0;
     }
-    .xmem-tree-arrow::before { content: '\\25B6'; }
-    .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-arrow { transform: rotate(90deg); }
+    .xmem-tree-arrow::before { content: '\\25B8'; }
+    .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-arrow { transform: rotate(90deg); color: #a1a1aa; }
     .xmem-tree-children { display: none; }
     .xmem-tree-open > .xmem-tree-children { display: block; }
 
@@ -1966,34 +2067,44 @@ function injectStyles() {
       width: 14px; height: 14px;
       display: inline-flex; align-items: center; justify-content: center;
       flex-shrink: 0;
+      color: #52525b;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+      font-size: 10px;
+      font-weight: 500;
     }
     .xmem-tree-folder-icon::before {
-      content: '\\1F4C1';
-      font-size: 12px;
-      filter: grayscale(0.5) brightness(0.8);
+      content: '/';
+      color: #71717a;
     }
     .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-folder-icon::before {
-      content: '\\1F4C2';
+      content: '/';
+      color: #a1a1aa;
     }
 
     .xmem-tree-file {
       display: flex;
       align-items: center;
-      gap: 4px;
-      padding: 3px 8px;
-      border-radius: 4px;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 3px;
       transition: background 0.1s;
       cursor: default;
     }
-    .xmem-tree-file:hover { background: rgba(255,255,255,0.03); }
+    .xmem-tree-file:hover { background: rgba(255,255,255,0.025); }
     .xmem-tree-name {
       font-size: 12px;
       color: #a1a1aa;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+      font-size: 11.5px;
     }
-    .xmem-tree-dir-header .xmem-tree-name { color: #d4d4d8; font-weight: 500; }
+    .xmem-tree-dir-header .xmem-tree-name {
+      color: #d4d4d8; font-weight: 500;
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+      font-size: 11.5px;
+    }
 
     .xmem-tree-icon {
       width: 14px; height: 14px;
@@ -2002,46 +2113,187 @@ function injectStyles() {
       font-size: 10px;
       border-radius: 2px;
     }
-    .xmem-icon-file::before { content: '\\1F4C4'; font-size: 11px; filter: grayscale(1) brightness(0.6); }
-    .xmem-icon-py::before { content: '\\1F40D'; font-size: 11px; }
-    .xmem-icon-ts::before { content: 'TS'; font-size: 8px; font-weight: 800; color: #3178c6; }
-    .xmem-icon-js::before { content: 'JS'; font-size: 8px; font-weight: 800; color: #f7df1e; }
-    .xmem-icon-json::before { content: '{}'; font-size: 8px; font-weight: 700; color: #71717a; }
-    .xmem-icon-md::before { content: 'MD'; font-size: 8px; font-weight: 800; color: #71717a; }
-    .xmem-icon-css::before { content: '#'; font-size: 10px; font-weight: 800; color: #38bdf8; }
-    .xmem-icon-html::before { content: '<>'; font-size: 8px; font-weight: 700; color: #f97316; }
-    .xmem-icon-yaml::before { content: 'Y'; font-size: 9px; font-weight: 800; color: #71717a; }
-    .xmem-icon-java::before { content: 'J'; font-size: 9px; font-weight: 800; color: #b07219; }
-    .xmem-icon-go::before { content: 'Go'; font-size: 8px; font-weight: 800; color: #00add8; }
-    .xmem-icon-rs::before { content: 'Rs'; font-size: 8px; font-weight: 800; color: #dea584; }
+    .xmem-icon-file::before { content: '~'; font-size: 11px; color: #71717a; font-family: 'SF Mono', monospace; }
+    .xmem-icon-py::before { content: 'py'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-ts::before { content: 'ts'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-js::before { content: 'js'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-json::before { content: '{}'; font-size: 8px; font-weight: 600; color: #71717a; font-family: 'SF Mono', monospace; }
+    .xmem-icon-md::before { content: 'md'; font-size: 7.5px; font-weight: 600; color: #71717a; font-family: 'SF Mono', monospace; }
+    .xmem-icon-css::before { content: 'cs'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-html::before { content: 'ht'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-yaml::before { content: 'ym'; font-size: 7.5px; font-weight: 600; color: #71717a; font-family: 'SF Mono', monospace; }
+    .xmem-icon-java::before { content: 'jv'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-go::before { content: 'go'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
+    .xmem-icon-rs::before { content: 'rs'; font-size: 7.5px; font-weight: 600; color: #8b8b95; font-family: 'SF Mono', monospace; }
 
     .xmem-ide-query-section {
-      padding: 12px 16px;
+      padding: 14px 18px;
       border-top: 1px solid rgba(255,255,255,0.06);
       flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .xmem-ide-query-label {
+      font-size: 10px; font-weight: 500; color: #8b8b95;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      margin-bottom: 8px;
+      font-style: italic;
     }
     .xmem-ide-query-bar {
       display: flex; align-items: center; gap: 8px;
-      padding: 8px 12px;
-      background: rgba(255,255,255,0.03);
+      padding: 9px 12px;
+      background: rgba(255,255,255,0.025);
       border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 8px;
-      color: #52525b;
-      transition: all 0.2s;
+      border-radius: 5px;
+      color: #3f3f46;
+      transition: border-color 0.15s;
     }
     .xmem-ide-query-bar:focus-within {
-      border-color: rgba(34,197,94,0.4);
-      color: #4ade80;
+      border-color: rgba(161,161,170,0.25);
+      color: #71717a;
     }
     .xmem-ide-query-bar input {
       flex: 1; background: none; border: none; outline: none;
-      color: #e4e4e7; font-size: 12px;
+      color: #d4d4d8; font-size: 12px;
     }
-    .xmem-ide-query-bar input::placeholder { color: #3f3f46; }
+    .xmem-ide-query-bar input::placeholder { color: #52525b; }
     .xmem-ide-query-result {
-      margin-top: 8px;
-      max-height: 200px;
+      margin-top: 10px;
+      max-height: 45vh;
       overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.05) transparent;
+    }
+    .xmem-ide-query-result::-webkit-scrollbar { width: 3px; }
+    .xmem-ide-query-result::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+
+    /* ═══ IDE Panel — Light Theme ═══ */
+    #xmem-ide-panel.xmem-ide-light {
+      background: #fafafa;
+      border-left: 1px solid #e4e4e7;
+      box-shadow: -4px 0 32px rgba(0,0,0,0.08);
+      color: #27272a;
+    }
+    .xmem-ide-light .xmem-ide-header {
+      border-bottom: 1px solid #e4e4e7;
+    }
+    .xmem-ide-light .xmem-ide-logo {
+      color: #71717a;
+    }
+    .xmem-ide-light .xmem-ide-logo-icon {
+      background: #f4f4f5;
+      border-color: #d4d4d8;
+    }
+    .xmem-ide-light .xmem-ide-logo-icon svg { stroke: #71717a; }
+    .xmem-ide-light .xmem-ide-logo span {
+      color: #27272a;
+    }
+    .xmem-ide-light .xmem-ide-close-btn { color: #a1a1aa; }
+    .xmem-ide-light .xmem-ide-close-btn:hover { color: #52525b; background: rgba(0,0,0,0.04); }
+
+    .xmem-ide-light .xmem-ide-config {
+      border-bottom-color: #e4e4e7;
+    }
+    .xmem-ide-light .xmem-ide-field label {
+      color: #71717a;
+    }
+    .xmem-ide-light .xmem-ide-field input {
+      background: #fff;
+      border-color: #d4d4d8;
+      color: #18181b;
+    }
+    .xmem-ide-light .xmem-ide-field input:focus {
+      border-color: #a1a1aa;
+    }
+    .xmem-ide-light .xmem-ide-field input::placeholder { color: #a1a1aa; }
+    .xmem-ide-light .xmem-ide-load-btn {
+      background: #f4f4f5;
+      color: #27272a;
+      border-color: #d4d4d8;
+    }
+    .xmem-ide-light .xmem-ide-load-btn:hover {
+      background: #e4e4e7;
+      border-color: #a1a1aa;
+    }
+
+    .xmem-ide-light .xmem-ide-tree-container {
+      scrollbar-color: rgba(0,0,0,0.08) transparent;
+    }
+    .xmem-ide-light .xmem-ide-tree-container::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); }
+    .xmem-ide-light .xmem-ide-empty { color: #a1a1aa; }
+
+    .xmem-ide-light .xmem-tree-dir-header:hover { background: rgba(0,0,0,0.03); }
+    .xmem-ide-light .xmem-tree-arrow { color: #a1a1aa; }
+    .xmem-ide-light .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-arrow { color: #71717a; }
+    .xmem-ide-light .xmem-tree-folder-icon::before { color: #a1a1aa; }
+    .xmem-ide-light .xmem-tree-open > .xmem-tree-dir-header .xmem-tree-folder-icon::before { color: #71717a; }
+    .xmem-ide-light .xmem-tree-file:hover { background: rgba(0,0,0,0.02); }
+    .xmem-ide-light .xmem-tree-name { color: #52525b; }
+    .xmem-ide-light .xmem-tree-dir-header .xmem-tree-name { color: #18181b; }
+
+    .xmem-ide-light .xmem-icon-file::before { color: #a1a1aa; }
+    .xmem-ide-light .xmem-icon-py::before,
+    .xmem-ide-light .xmem-icon-ts::before,
+    .xmem-ide-light .xmem-icon-js::before,
+    .xmem-ide-light .xmem-icon-css::before,
+    .xmem-ide-light .xmem-icon-html::before,
+    .xmem-ide-light .xmem-icon-java::before,
+    .xmem-ide-light .xmem-icon-go::before,
+    .xmem-ide-light .xmem-icon-rs::before { color: #71717a; }
+    .xmem-ide-light .xmem-icon-json::before,
+    .xmem-ide-light .xmem-icon-md::before,
+    .xmem-ide-light .xmem-icon-yaml::before { color: #a1a1aa; }
+
+    .xmem-ide-light .xmem-ide-query-section {
+      border-top-color: #e4e4e7;
+    }
+    .xmem-ide-light .xmem-ide-query-label { color: #71717a; }
+    .xmem-ide-light .xmem-ide-query-bar {
+      background: #fff;
+      border-color: #d4d4d8;
+      color: #a1a1aa;
+    }
+    .xmem-ide-light .xmem-ide-query-bar:focus-within {
+      border-color: #71717a;
+      color: #52525b;
+    }
+    .xmem-ide-light .xmem-ide-query-bar input { color: #18181b; }
+    .xmem-ide-light .xmem-ide-query-bar input::placeholder { color: #a1a1aa; }
+    .xmem-ide-light .xmem-ide-query-result {
+      scrollbar-color: rgba(0,0,0,0.08) transparent;
+    }
+    .xmem-ide-light .xmem-ide-query-result::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); }
+
+    .xmem-ide-light .xmem-answer {
+      background: rgba(0,0,0,0.015);
+      border-color: #e4e4e7;
+      border-left-color: #a1a1aa;
+    }
+    .xmem-ide-light .xmem-answer-text { color: #27272a; }
+    .xmem-ide-light .xmem-answer-sources { border-top-color: #e4e4e7; }
+    .xmem-ide-light .xmem-answer-sources-label { color: #a1a1aa; }
+    .xmem-ide-light .xmem-source-item { color: #71717a; }
+    .xmem-ide-light .xmem-error {
+      background: rgba(239,68,68,0.04);
+      border-color: rgba(239,68,68,0.15);
+      color: #dc2626;
+    }
+    .xmem-ide-light .xmem-loader {
+      border-color: rgba(0,0,0,0.06);
+      border-top-color: #71717a;
+    }
+    .xmem-ide-light .xmem-md-body { color: #27272a; }
+    .xmem-ide-light .xmem-md-body .xmem-md-h { color: #18181b; }
+    .xmem-ide-light .xmem-md-body .xmem-md-pre {
+      background: #f4f4f5;
+      border-color: #e4e4e7;
+      color: #27272a;
+    }
+    .xmem-ide-light .xmem-md-body .xmem-md-code {
+      background: #f4f4f5;
+      border-color: #e4e4e7;
+      color: #0969da;
     }
 
     /* ═══ Markdown Renderer ═══ */
@@ -2103,24 +2355,24 @@ function injectStyles() {
       transform: translateX(-50%) translateY(0);
     }
     .xmem-ingest-status.xmem-ingest-pending {
-      background: rgba(124, 58, 237, 0.08);
-      border: 1px solid rgba(124, 58, 237, 0.2);
-      color: #c4b5fd;
+      background: rgba(161,161,170, 0.06);
+      border: 1px solid rgba(161,161,170, 0.15);
+      color: #a1a1aa;
     }
     .xmem-ingest-status.xmem-ingest-success {
-      background: rgba(34, 197, 94, 0.08);
-      border: 1px solid rgba(34, 197, 94, 0.2);
-      color: #4ade80;
+      background: rgba(161,161,170, 0.06);
+      border: 1px solid rgba(161,161,170, 0.15);
+      color: #d4d4d8;
     }
     .xmem-ingest-status.xmem-ingest-error {
-      background: rgba(239, 68, 68, 0.08);
-      border: 1px solid rgba(239, 68, 68, 0.2);
-      color: #f87171;
+      background: rgba(161,161,170, 0.04);
+      border: 1px solid rgba(239, 68, 68, 0.15);
+      color: #ef4444;
     }
     .xmem-ingest-spinner {
       width: 12px; height: 12px;
-      border: 2px solid rgba(124, 58, 237, 0.2);
-      border-top-color: #7c3aed;
+      border: 1.5px solid rgba(161,161,170, 0.15);
+      border-top-color: #71717a;
       border-radius: 50%;
       animation: xmem-spin 0.7s linear infinite;
       flex-shrink: 0;
@@ -2452,18 +2704,134 @@ function extractCodeRefs(query: string): {
   return { files, symbols };
 }
 
+function showInjectionOverlay(editor: HTMLElement, label: string): HTMLElement {
+  const overlay = document.createElement("div");
+  const isLight = !isDarkBackground(document.body);
+  overlay.className = `xmem-inject-overlay${isLight ? " xmem-inject-light" : ""}`;
+  overlay.innerHTML = `
+    <span class="xmem-inject-dot"></span>
+    <span class="xmem-inject-dot"></span>
+    <span class="xmem-inject-dot"></span>
+    <span style="margin-left: 2px">${label}</span>
+  `;
+  document.body.appendChild(overlay);
+
+  const caret = getCaretXY(editor);
+  if (caret) {
+    overlay.style.left = `${caret.x + 4}px`;
+    overlay.style.top = `${caret.y + (caret.h - 14) / 2}px`;
+  } else {
+    const rect = editor.getBoundingClientRect();
+    const cs = getComputedStyle(editor);
+    const textLen = (editor instanceof HTMLTextAreaElement ? editor.value : editor.textContent || "").length;
+    overlay.style.left = `${rect.left + parseFloat(cs.paddingLeft) + Math.min(textLen * 7, rect.width * 0.6)}px`;
+    overlay.style.top = `${rect.top + parseFloat(cs.paddingTop)}px`;
+  }
+
+  return overlay;
+}
+
+function removeInjectionOverlay(overlay: HTMLElement) {
+  overlay.remove();
+}
+
+function fireBypassSend(editor: HTMLElement) {
+  bypassContextInjection = true;
+  const sendBtn = findSendButton();
+  if (sendBtn) {
+    sendBtn.click();
+  } else {
+    editor.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }
+}
+
+const USER_MSG_SELECTORS = [
+  '[data-message-author-role="user"]',
+  '.font-user-message',
+  'user-query',
+  '.user-turn',
+  '[data-is-user-message]',
+  '.whitespace-pre-wrap',
+];
+
+const CONTEXT_TAG_RE = /<xmem_(?:code_context|memory_context)[^>]*>[\s\S]*?<\/xmem_(?:code_context|memory_context)>\s*/g;
+
+function scrubContextFromLastUserMessage() {
+  let attempts = 0;
+  const maxAttempts = 25;
+
+  const poll = () => {
+    attempts++;
+    for (const sel of USER_MSG_SELECTORS) {
+      const nodes = document.querySelectorAll<HTMLElement>(sel);
+      if (nodes.length === 0) continue;
+      const last = nodes[nodes.length - 1];
+      const text = last.textContent || "";
+      if (CONTEXT_TAG_RE.test(text)) {
+        CONTEXT_TAG_RE.lastIndex = 0;
+
+        const walker = document.createTreeWalker(last, NodeFilter.SHOW_TEXT);
+        const textNodes: Text[] = [];
+        let node: Text | null;
+        while ((node = walker.nextNode() as Text | null)) textNodes.push(node);
+
+        const fullText = textNodes.map((n) => n.nodeValue).join("");
+        if (!CONTEXT_TAG_RE.test(fullText)) {
+          if (attempts < maxAttempts) setTimeout(poll, 200);
+          CONTEXT_TAG_RE.lastIndex = 0;
+          return;
+        }
+        CONTEXT_TAG_RE.lastIndex = 0;
+
+        let accumulated = "";
+        const tagStart = fullText.search(/<xmem_(?:code_context|memory_context)/);
+        const tagEndMatch = fullText.match(/<\/xmem_(?:code_context|memory_context)>\s*/);
+        if (tagStart === -1 || !tagEndMatch || tagEndMatch.index === undefined) {
+          if (attempts < maxAttempts) setTimeout(poll, 200);
+          return;
+        }
+        const tagEnd = tagEndMatch.index + tagEndMatch[0].length;
+
+        let pos = 0;
+        for (const tn of textNodes) {
+          const val = tn.nodeValue || "";
+          const nodeStart = pos;
+          const nodeEnd = pos + val.length;
+          pos = nodeEnd;
+
+          if (nodeEnd <= tagStart || nodeStart >= tagEnd) continue;
+
+          const cutFrom = Math.max(0, tagStart - nodeStart);
+          const cutTo = Math.min(val.length, tagEnd - nodeStart);
+          tn.nodeValue = val.slice(0, cutFrom) + val.slice(cutTo);
+        }
+        return;
+      }
+    }
+    if (attempts < maxAttempts) setTimeout(poll, 200);
+  };
+
+  setTimeout(poll, 300);
+}
+
 async function injectContextAndSend(editor: HTMLElement) {
   const userQuery = readEditorText(editor).trim();
   if (!userQuery || userQuery.length < 5) {
-    bypassContextInjection = true;
-    const btn = findSendButton();
-    if (btn) btn.click();
+    fireBypassSend(editor);
     return;
   }
 
   if (xmemMode === "search") {
-    // Search mode: inject memory context
-    showToast("\u{1F50D} Fetching memories...");
+    const overlay = showInjectionOverlay(editor, "Recalling memories...");
     let contextText = "";
     try {
       const result = await retrieveAnswer(userQuery);
@@ -2471,70 +2839,40 @@ async function injectContextAndSend(editor: HTMLElement) {
     } catch (err) {
       console.error("[XMem] Memory fetch failed:", err);
     }
+
     if (contextText) {
       replaceEditorText(
         editor,
         `<xmem_memory_context>\n${contextText}\n</xmem_memory_context>\n\n${userQuery}`,
       );
     }
-    await new Promise((r) => setTimeout(r, 150));
-    bypassContextInjection = true;
-    const btn = findSendButton();
-    if (btn) btn.click();
-    else
-      editor.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+    await new Promise((r) => setTimeout(r, 80));
+    fireBypassSend(editor);
+    requestAnimationFrame(() => removeInjectionOverlay(overlay));
+    if (contextText) scrubContextFromLastUserMessage();
     return;
   }
 
   // IDE mode
   if (!ideOrgId || !ideRepo) {
     showToast("Set up your repo first with Xrepo", true);
-    bypassContextInjection = true;
-    const btn = findSendButton();
-    if (btn) btn.click();
+    fireBypassSend(editor);
     return;
   }
 
-  // Step 1: detect mentioned files and symbols
   const { files, symbols } = extractCodeRefs(userQuery);
   const hasRefs = files.length > 0 || symbols.length > 0;
 
   if (!hasRefs) {
-    // No code references found — send the message as-is, no code agent call needed
     console.log(
       "[XMem] IDE: no file/symbol refs detected, sending without context",
     );
-    bypassContextInjection = true;
-    const btn = findSendButton();
-    if (btn) btn.click();
-    else
-      editor.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          keyCode: 13,
-          which: 13,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
+    fireBypassSend(editor);
     return;
   }
 
-  showToast(
-    `\u{1F50D} Fetching code for ${files.length + symbols.length} reference(s)...`,
-  );
+  const overlay = showInjectionOverlay(editor, "Fetching code context...");
 
-  // Step 2: build a precise, targeted retrieval prompt
   const fileList = files.map((f) => `  - file: "${f}"`).join("\n");
   const symList = symbols.map((s) => `  - symbol: "${s}"`).join("\n");
 
@@ -2564,24 +2902,10 @@ async function injectContextAndSend(editor: HTMLElement) {
     replaceEditorText(editor, enriched);
   }
 
-  await new Promise((r) => setTimeout(r, 150));
-
-  bypassContextInjection = true;
-  const sendBtn = findSendButton();
-  if (sendBtn) {
-    sendBtn.click();
-  } else {
-    editor.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "Enter",
-        code: "Enter",
-        keyCode: 13,
-        which: 13,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-  }
+  await new Promise((r) => setTimeout(r, 80));
+  fireBypassSend(editor);
+  requestAnimationFrame(() => removeInjectionOverlay(overlay));
+  if (contextText) scrubContextFromLastUserMessage();
 }
 
 // ─── Main Loop ────────────────────────────────────────────────────────────
@@ -2600,6 +2924,7 @@ function mainLoop() {
 
   hookSendButtons();
   hookEnterKey(editor);
+  if (idePanelOpen) applyIdePanelTheme();
 
   if (editor.dataset.xmemBound) return;
   editor.dataset.xmemBound = "1";
@@ -2738,32 +3063,32 @@ const SLASH_OPTIONS: SlashOption[] = [
     mode: "ingest",
     label: "Ingest",
     desc: "Save conversations to memory",
-    color: "#7c3aed",
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+    color: "#a1a1aa",
+    icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
   },
   {
     command: "Xsearch",
     mode: "search",
     label: "Search",
     desc: "Auto-inject memory context on send",
-    color: "#3b82f6",
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    color: "#a1a1aa",
+    icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
   },
   {
     command: "Xide",
     mode: "ide",
     label: "IDE",
     desc: "Auto-inject code context on send",
-    color: "#22c55e",
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+    color: "#a1a1aa",
+    icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   },
   {
     command: "Xrepo",
     mode: "repo",
     label: "Repo Tree",
     desc: "Browse & query codebase structure",
-    color: "#f59e0b",
-    icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    color: "#a1a1aa",
+    icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
   },
 ];
 
@@ -2806,6 +3131,7 @@ function showSlashDropdown(
     slashDropdownEl.id = "xmem-slash-dropdown";
     document.body.appendChild(slashDropdownEl);
   }
+  slashDropdownEl.classList.toggle("xmem-slash-light", !isDarkBackground(document.body));
 
   slashSelectedIdx = Math.min(slashSelectedIdx, options.length - 1);
 
@@ -2813,9 +3139,9 @@ function showSlashDropdown(
     .map(
       (opt, i) => `
     <div class="xmem-slash-option ${i === slashSelectedIdx ? "xmem-slash-selected" : ""}" data-mode="${opt.mode}">
-      <div class="xmem-slash-icon" style="color: ${opt.color}">${opt.icon}</div>
+      <div class="xmem-slash-icon">${opt.icon}</div>
       <div class="xmem-slash-text">
-        <span class="xmem-slash-cmd" style="color: ${opt.color}">${opt.command}</span>
+        <span class="xmem-slash-cmd">${opt.command}</span>
         <span class="xmem-slash-desc">${opt.desc}</span>
       </div>
     </div>`,
@@ -2976,9 +3302,16 @@ function activateSlashMode(
 
 // ─── IDE Panel ────────────────────────────────────────────────────────────
 
+function applyIdePanelTheme() {
+  if (!idePanelEl) return;
+  const isLight = !isDarkBackground(document.body);
+  idePanelEl.classList.toggle("xmem-ide-light", isLight);
+}
+
 function openIdePanel() {
   if (idePanelEl && document.body.contains(idePanelEl)) {
     idePanelEl.style.display = "flex";
+    applyIdePanelTheme();
     idePanelOpen = true;
     return;
   }
@@ -2997,6 +3330,7 @@ function openIdePanel() {
   }
 
   document.body.appendChild(idePanelEl);
+  applyIdePanelTheme();
   idePanelOpen = true;
 }
 
@@ -3016,14 +3350,14 @@ function renderIdePanel() {
     <div class="xmem-ide-header">
       <div class="xmem-ide-logo">
         <div class="xmem-ide-logo-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#71717a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
           </svg>
         </div>
-        <span>XMem IDE</span>
+        <span>xmem</span>
       </div>
       <button class="xmem-ide-close-btn" title="Close">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
@@ -3031,25 +3365,26 @@ function renderIdePanel() {
 
     <div class="xmem-ide-config">
       <div class="xmem-ide-field">
-        <label>Org ID</label>
-        <input type="text" id="xmem-ide-org" placeholder="e.g. zinnia" value="${escapeHtml(ideOrgId)}" />
+        <label>Organization</label>
+        <input type="text" id="xmem-ide-org" placeholder="zinnia" value="${escapeHtml(ideOrgId)}" />
       </div>
       <div class="xmem-ide-field">
         <label>Repository</label>
-        <input type="text" id="xmem-ide-repo" placeholder="e.g. payment-service" value="${escapeHtml(ideRepo)}" />
+        <input type="text" id="xmem-ide-repo" placeholder="payment-service" value="${escapeHtml(ideRepo)}" />
       </div>
       <button class="xmem-ide-load-btn" id="xmem-ide-load">
-        ${isConfigured ? "Reload Tree" : "Load Project"}
+        ${isConfigured ? "Reload" : "Load"}
       </button>
     </div>
 
     <div class="xmem-ide-tree-container" id="xmem-ide-tree">
-      ${isConfigured && ideTreeData ? renderTreeHTML(ideTreeData) : '<div class="xmem-ide-empty">Enter org &amp; repo, then click Load</div>'}
+      ${isConfigured && ideTreeData ? renderTreeHTML(ideTreeData) : '<div class="xmem-ide-empty">Configure organization and repository to begin.</div>'}
     </div>
 
     <div class="xmem-ide-query-section">
+      <div class="xmem-ide-query-label">Search codebase</div>
       <div class="xmem-ide-query-bar">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
         <input type="text" id="xmem-ide-query-input" placeholder="Ask about this codebase..." />
@@ -3134,14 +3469,42 @@ function setupIdePanelEvents() {
     ) as HTMLElement;
     resultDiv.innerHTML = '<div class="xmem-loader"></div>';
 
+    let answerText = "";
+    let sourcesHtml = "";
+    let started = false;
+
     try {
-      const resp = await queryCode(ideOrgId, ideRepo, q);
-      const answerText = resp.answer || "No answer generated.";
-      resultDiv.innerHTML = `
-        <div class="xmem-answer">
-          <div class="xmem-answer-text xmem-md-body">${renderMarkdown(answerText)}</div>
-          ${resp.sources?.length ? `<div class="xmem-answer-sources"><span class="xmem-answer-sources-label">${resp.sources.length} source${resp.sources.length > 1 ? "s" : ""}</span></div>` : ""}
-        </div>`;
+      await streamCodeQuery(ideOrgId, ideRepo, q, (chunk) => {
+        if (!started) {
+          started = true;
+          resultDiv.innerHTML = `
+            <div class="xmem-answer">
+              <div class="xmem-answer-text xmem-md-body"></div>
+            </div>`;
+        }
+
+        if (chunk.type === "status") {
+          const textDiv = resultDiv.querySelector(".xmem-answer-text");
+          if (textDiv && !answerText) {
+            textDiv.innerHTML = `<em>${escapeHtml(chunk.content)}</em>`;
+          }
+        } else if (chunk.type === "chunk") {
+          answerText += chunk.text;
+          const textDiv = resultDiv.querySelector(".xmem-answer-text");
+          if (textDiv) {
+            textDiv.innerHTML = renderMarkdown(answerText);
+          }
+        } else if (chunk.type === "sources") {
+          if (chunk.sources && chunk.sources.length > 0) {
+            sourcesHtml = `<div class="xmem-answer-sources"><span class="xmem-answer-sources-label">${chunk.sources.length} source${chunk.sources.length > 1 ? "s" : ""}</span></div>`;
+          }
+        } else if (chunk.type === "done") {
+          if (sourcesHtml) {
+            const answerDiv = resultDiv.querySelector(".xmem-answer");
+            if (answerDiv) answerDiv.insertAdjacentHTML('beforeend', sourcesHtml);
+          }
+        }
+      });
     } catch {
       resultDiv.innerHTML =
         '<div class="xmem-error">Failed to query codebase.</div>';
