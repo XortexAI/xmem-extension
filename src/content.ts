@@ -557,7 +557,7 @@ function showIngestStatus(
   if (status === "pending") {
     banner.innerHTML = `
       <div class="xmem-ingest-spinner"></div>
-      <span>Memorizing conversation…</span>
+      <span>Conversation queued for memorization…</span>
     `;
   }
 
@@ -596,6 +596,139 @@ function updateIngestStatus(el: HTMLElement, status: "success" | "error") {
   );
 }
 
+function showIngestQueued() {
+  document.querySelectorAll(".xmem-ingest-status").forEach((el) => el.remove());
+
+  const banner = document.createElement("div");
+  banner.className = "xmem-ingest-status xmem-ingest-success";
+  banner.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+    <span>Conversation memorized</span>
+  `;
+
+  document.body.appendChild(banner);
+  requestAnimationFrame(() => banner.classList.add("xmem-status-visible"));
+
+  setTimeout(() => {
+    banner.classList.remove("xmem-status-visible");
+    setTimeout(() => banner.remove(), 400);
+  }, 3000);
+}
+
+// ─── Ingestion Queue ──────────────────────────────────────────────────────
+
+interface IngestQueueItem {
+  id: number;
+  userText: string;
+  timestamp: number;
+}
+
+let queueBadgeEl: HTMLElement | null = null;
+
+class IngestionQueue {
+  private queue: IngestQueueItem[] = [];
+  private processing = false;
+  private nextId = 1;
+
+  enqueue(userText: string) {
+    this.queue.push({
+      id: this.nextId++,
+      userText,
+      timestamp: Date.now(),
+    });
+    this.renderBadge();
+
+    if (!this.processing) {
+      this.processNext();
+    }
+  }
+
+  private async processNext() {
+    if (this.queue.length === 0) {
+      this.processing = false;
+      this.hideBadge();
+      return;
+    }
+
+    this.processing = true;
+    const item = this.queue[0];
+    this.renderBadge();
+
+    try {
+      const agentResponse = await captureLatestAgentResponse();
+      await ingestMemory(item.userText, agentResponse);
+      this.queue.shift();
+      console.log(`[XMem] Queue: ingested item #${item.id}, ${this.queue.length} remaining`);
+    } catch (err) {
+      console.error(`[XMem] Queue: ingestion failed for item #${item.id}`, err);
+      this.queue.shift();
+      this.flashError();
+    }
+
+    this.renderBadge();
+    this.processNext();
+  }
+
+  private ensureBadge() {
+    if (queueBadgeEl) return;
+    queueBadgeEl = document.createElement("div");
+    queueBadgeEl.className = "xmem-queue-badge";
+    document.body.appendChild(queueBadgeEl);
+  }
+
+  private renderBadge() {
+    this.ensureBadge();
+    const pending = this.queue.length;
+
+    if (pending === 0) {
+      this.hideBadge();
+      return;
+    }
+
+    queueBadgeEl!.innerHTML = `
+      <div class="xmem-queue-spinner"></div>
+      <span>Syncing${pending > 1 ? ` ${pending} conversations` : ""}…</span>
+    `;
+    queueBadgeEl!.classList.add("xmem-queue-visible");
+  }
+
+  private hideBadge() {
+    if (!queueBadgeEl) return;
+    queueBadgeEl.classList.remove("xmem-queue-visible");
+  }
+
+  private flashError() {
+    this.ensureBadge();
+    queueBadgeEl!.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+      <span>Sync failed — will retry next turn</span>
+    `;
+    queueBadgeEl!.classList.add("xmem-queue-visible", "xmem-queue-error");
+    setTimeout(() => {
+      queueBadgeEl?.classList.remove("xmem-queue-visible", "xmem-queue-error");
+    }, 4000);
+  }
+
+  get length() {
+    return this.queue.length;
+  }
+
+  get isProcessing() {
+    return this.processing;
+  }
+}
+
+const ingestionQueue = new IngestionQueue();
+
+// ─── Save Conversation (non-blocking, queue-based) ───────────────────────
+
 async function saveConversation() {
   const enabled = await new Promise<boolean>((resolve) => {
     if (!chrome?.storage?.sync) return resolve(false);
@@ -610,21 +743,13 @@ async function saveConversation() {
   const cleaned = raw.replace(/<[^>]+>/g, "").trim();
   if (cleaned.length < 5) return;
 
-  // 1. Trigger sidecar response
   triggerSidecar(cleaned);
 
-  // 2. Capture the latest agent (assistant) response from the page
-  const agentResponse = await captureLatestAgentResponse();
-
-  // 3. Save memory (user query + agent response)
-  const statusEl = xmemMode === "ingest" ? showIngestStatus("pending") : null;
-  try {
-    await ingestMemory(cleaned, agentResponse);
-    if (statusEl) updateIngestStatus(statusEl, "success");
-  } catch (err) {
-    console.error("XMem: save failed", err);
-    if (statusEl) updateIngestStatus(statusEl, "error");
+  if (xmemMode === "ingest") {
+    showIngestQueued();
   }
+
+  ingestionQueue.enqueue(cleaned);
   savedInputText = "";
 }
 
@@ -2371,6 +2496,49 @@ function injectStyles() {
     }
     .xmem-ingest-spinner {
       width: 12px; height: 12px;
+      border: 1.5px solid rgba(161,161,170, 0.15);
+      border-top-color: #71717a;
+      border-radius: 50%;
+      animation: xmem-spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    /* ═══ Ingestion Queue Badge ═══ */
+    .xmem-queue-badge {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 2147483646;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      pointer-events: none;
+
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(24, 24, 30, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(161,161,170, 0.12);
+      color: #a1a1aa;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+    .xmem-queue-badge.xmem-queue-visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .xmem-queue-badge.xmem-queue-error {
+      border-color: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+    }
+    .xmem-queue-spinner {
+      width: 10px; height: 10px;
       border: 1.5px solid rgba(161,161,170, 0.15);
       border-top-color: #71717a;
       border-radius: 50%;
