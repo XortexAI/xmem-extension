@@ -47,6 +47,11 @@ let cachedResults: SourceRecord[] = [];
 type XMemMode = "ingest" | "search" | "ide" | "repo";
 let xmemMode: XMemMode = "search";
 
+// ─── Effort Level State ───────────────────────────────────────────────────
+
+type EffortLevel = "low" | "high";
+let xmemEffortLevel: EffortLevel = "low";
+
 // ─── IDE Mode State ───────────────────────────────────────────────────────
 
 let idePanelEl: HTMLElement | null = null;
@@ -659,7 +664,7 @@ class IngestionQueue {
 
     try {
       const agentResponse = await captureLatestAgentResponse();
-      await ingestMemory(item.userText, agentResponse);
+      await ingestMemory(item.userText, agentResponse, xmemEffortLevel);
       this.queue.shift();
       console.log(`[XMem] Queue: ingested item #${item.id}, ${this.queue.length} remaining`);
     } catch (err) {
@@ -1056,7 +1061,7 @@ function setupSidebarEvents(sidebar: HTMLElement) {
       const text = readEditorText(editor).trim();
       if (!text) return;
       try {
-        await ingestMemory(text);
+        await ingestMemory(text, "", xmemEffortLevel);
         showToast("Memory saved!");
       } catch {
         showToast("Failed to save memory", true);
@@ -1995,11 +2000,17 @@ function injectStyles() {
     .xmem-slash-option {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 10px;
       padding: 9px 12px;
       border-radius: 6px;
       cursor: pointer;
       transition: background 0.12s ease;
+    }
+    .xmem-slash-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .xmem-slash-option:hover,
     .xmem-slash-option.xmem-slash-selected {
@@ -2050,6 +2061,56 @@ function injectStyles() {
     }
     .xmem-slash-light .xmem-slash-cmd { color: #27272a; }
     .xmem-slash-light .xmem-slash-desc { color: #a1a1aa; }
+
+    /* ═══ Effort Toggle (inside slash dropdown) ═══ */
+    .xmem-effort-high-warn {
+      color: #fb923c !important;
+      font-weight: 500;
+    }
+    
+    .xmem-slash-right {
+      display: flex;
+      align-items: center;
+    }
+
+    .xmem-switch-btn {
+      position: relative;
+      width: 28px;
+      height: 16px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.15);
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.2s ease;
+    }
+    .xmem-switch-btn.xmem-switch-on {
+      background: #fb923c;
+    }
+    .xmem-switch-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .xmem-switch-btn.xmem-switch-on .xmem-switch-knob {
+      transform: translateX(12px);
+    }
+
+    /* ── Effort Toggle Light Theme ── */
+    .xmem-slash-light .xmem-effort-high-warn {
+      color: #ea580c !important;
+    }
+    .xmem-slash-light .xmem-switch-btn {
+      background: #d4d4d8;
+    }
+    .xmem-slash-light .xmem-switch-btn.xmem-switch-on {
+      background: #ea580c;
+    }
 
     /* ═══ IDE Panel ═══ */
     #xmem-ide-panel {
@@ -2723,7 +2784,7 @@ function showHighlightBtn(sel: Selection, e: MouseEvent) {
       }
 
       try {
-        await ingestMemory(textToSave);
+        await ingestMemory(textToSave, "", xmemEffortLevel);
       } catch (err) {
         console.error("XMem highlight save failed", err);
       }
@@ -3288,6 +3349,27 @@ function checkSlashCommand(editor: HTMLElement) {
   showSlashDropdown(filtered, caret, editor, prefix);
 }
 
+function wireEffortToggle(dropdownEl: HTMLElement, options: SlashOption[], caret: CaretXY, editor: HTMLElement, currentPrefix: string) {
+  dropdownEl.querySelectorAll<HTMLElement>(".xmem-switch-btn").forEach((btn) => {
+    btn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const level = btn.dataset.effort as EffortLevel;
+      if (level && (level === "low" || level === "high")) {
+        xmemEffortLevel = level;
+        if (chrome?.storage?.sync) {
+          chrome.storage.sync.set({ xmem_effort_level: level });
+        }
+        showSlashDropdown(options, caret, editor, currentPrefix);
+      }
+    });
+  });
+}
+
 function showSlashDropdown(
   options: SlashOption[],
   caret: CaretXY,
@@ -3305,14 +3387,35 @@ function showSlashDropdown(
 
   slashDropdownEl.innerHTML = options
     .map(
-      (opt, i) => `
+      (opt, i) => {
+        const isIngest = opt.mode === "ingest";
+        const isHigh = isIngest && xmemEffortLevel === "high";
+        
+        const descText = isHigh ? "Higher cost, Better memories" : opt.desc;
+        const descClass = isHigh ? "xmem-slash-desc xmem-effort-high-warn" : "xmem-slash-desc";
+
+        let html = `
     <div class="xmem-slash-option ${i === slashSelectedIdx ? "xmem-slash-selected" : ""}" data-mode="${opt.mode}">
-      <div class="xmem-slash-icon">${opt.icon}</div>
-      <div class="xmem-slash-text">
-        <span class="xmem-slash-cmd">${opt.command}</span>
-        <span class="xmem-slash-desc">${opt.desc}</span>
-      </div>
-    </div>`,
+      <div class="xmem-slash-left">
+        <div class="xmem-slash-icon">${opt.icon}</div>
+        <div class="xmem-slash-text">
+          <span class="xmem-slash-cmd">${opt.command}</span>
+          <span class="${descClass}">${descText}</span>
+        </div>
+      </div>`;
+
+        if (isIngest) {
+          html += `
+      <div class="xmem-slash-right">
+        <button class="xmem-switch-btn ${isHigh ? "xmem-switch-on" : ""}" data-effort="${isHigh ? "low" : "high"}" title="Deep Extraction Effort">
+          <div class="xmem-switch-knob"></div>
+        </button>
+      </div>`;
+        }
+
+        html += `</div>`;
+        return html;
+      },
     )
     .join("");
 
@@ -3345,6 +3448,8 @@ function showSlashDropdown(
         if (mode) activateSlashMode(mode, editor, currentPrefix);
       });
     });
+
+  wireEffortToggle(slashDropdownEl, options, caret, editor, currentPrefix);
 }
 
 function dismissSlashDropdown() {
@@ -3762,7 +3867,7 @@ function attachTreeToggleListeners(container: HTMLElement) {
 function loadSavedMode() {
   if (chrome?.storage?.sync) {
     chrome.storage.sync.get(
-      ["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo"],
+      ["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo", "xmem_effort_level"],
       (data) => {
         if (
           data.xmem_mode === "ingest" ||
@@ -3771,6 +3876,9 @@ function loadSavedMode() {
           data.xmem_mode === "repo"
         ) {
           xmemMode = data.xmem_mode;
+        }
+        if (data.xmem_effort_level === "low" || data.xmem_effort_level === "high") {
+          xmemEffortLevel = data.xmem_effort_level;
         }
         ideOrgId = data.xmem_ide_org_id || "";
         ideRepo = data.xmem_ide_repo || "";
