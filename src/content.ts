@@ -47,6 +47,11 @@ let cachedResults: SourceRecord[] = [];
 type XMemMode = "ingest" | "search" | "ide" | "repo";
 let xmemMode: XMemMode = "search";
 
+// ─── Effort Level State ───────────────────────────────────────────────────
+
+type EffortLevel = "low" | "high";
+let xmemEffortLevel: EffortLevel = "low";
+
 // ─── IDE Mode State ───────────────────────────────────────────────────────
 
 let idePanelEl: HTMLElement | null = null;
@@ -557,7 +562,7 @@ function showIngestStatus(
   if (status === "pending") {
     banner.innerHTML = `
       <div class="xmem-ingest-spinner"></div>
-      <span>Memorizing conversation…</span>
+      <span>Conversation queued for memorization…</span>
     `;
   }
 
@@ -596,6 +601,139 @@ function updateIngestStatus(el: HTMLElement, status: "success" | "error") {
   );
 }
 
+function showIngestQueued() {
+  document.querySelectorAll(".xmem-ingest-status").forEach((el) => el.remove());
+
+  const banner = document.createElement("div");
+  banner.className = "xmem-ingest-status xmem-ingest-success";
+  banner.innerHTML = `
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+    <span>Conversation memorized</span>
+  `;
+
+  document.body.appendChild(banner);
+  requestAnimationFrame(() => banner.classList.add("xmem-status-visible"));
+
+  setTimeout(() => {
+    banner.classList.remove("xmem-status-visible");
+    setTimeout(() => banner.remove(), 400);
+  }, 3000);
+}
+
+// ─── Ingestion Queue ──────────────────────────────────────────────────────
+
+interface IngestQueueItem {
+  id: number;
+  userText: string;
+  timestamp: number;
+}
+
+let queueBadgeEl: HTMLElement | null = null;
+
+class IngestionQueue {
+  private queue: IngestQueueItem[] = [];
+  private processing = false;
+  private nextId = 1;
+
+  enqueue(userText: string) {
+    this.queue.push({
+      id: this.nextId++,
+      userText,
+      timestamp: Date.now(),
+    });
+    this.renderBadge();
+
+    if (!this.processing) {
+      this.processNext();
+    }
+  }
+
+  private async processNext() {
+    if (this.queue.length === 0) {
+      this.processing = false;
+      this.hideBadge();
+      return;
+    }
+
+    this.processing = true;
+    const item = this.queue[0];
+    this.renderBadge();
+
+    try {
+      const agentResponse = await captureLatestAgentResponse();
+      await ingestMemory(item.userText, agentResponse, xmemEffortLevel);
+      this.queue.shift();
+      console.log(`[XMem] Queue: ingested item #${item.id}, ${this.queue.length} remaining`);
+    } catch (err) {
+      console.error(`[XMem] Queue: ingestion failed for item #${item.id}`, err);
+      this.queue.shift();
+      this.flashError();
+    }
+
+    this.renderBadge();
+    this.processNext();
+  }
+
+  private ensureBadge() {
+    if (queueBadgeEl) return;
+    queueBadgeEl = document.createElement("div");
+    queueBadgeEl.className = "xmem-queue-badge";
+    document.body.appendChild(queueBadgeEl);
+  }
+
+  private renderBadge() {
+    this.ensureBadge();
+    const pending = this.queue.length;
+
+    if (pending === 0) {
+      this.hideBadge();
+      return;
+    }
+
+    queueBadgeEl!.innerHTML = `
+      <div class="xmem-queue-spinner"></div>
+      <span>Syncing${pending > 1 ? ` ${pending} conversations` : ""}…</span>
+    `;
+    queueBadgeEl!.classList.add("xmem-queue-visible");
+  }
+
+  private hideBadge() {
+    if (!queueBadgeEl) return;
+    queueBadgeEl.classList.remove("xmem-queue-visible");
+  }
+
+  private flashError() {
+    this.ensureBadge();
+    queueBadgeEl!.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
+      <span>Sync failed — will retry next turn</span>
+    `;
+    queueBadgeEl!.classList.add("xmem-queue-visible", "xmem-queue-error");
+    setTimeout(() => {
+      queueBadgeEl?.classList.remove("xmem-queue-visible", "xmem-queue-error");
+    }, 4000);
+  }
+
+  get length() {
+    return this.queue.length;
+  }
+
+  get isProcessing() {
+    return this.processing;
+  }
+}
+
+const ingestionQueue = new IngestionQueue();
+
+// ─── Save Conversation (non-blocking, queue-based) ───────────────────────
+
 async function saveConversation() {
   const enabled = await new Promise<boolean>((resolve) => {
     if (!chrome?.storage?.sync) return resolve(false);
@@ -610,21 +748,13 @@ async function saveConversation() {
   const cleaned = raw.replace(/<[^>]+>/g, "").trim();
   if (cleaned.length < 5) return;
 
-  // 1. Trigger sidecar response
   triggerSidecar(cleaned);
 
-  // 2. Capture the latest agent (assistant) response from the page
-  const agentResponse = await captureLatestAgentResponse();
-
-  // 3. Save memory (user query + agent response)
-  const statusEl = xmemMode === "ingest" ? showIngestStatus("pending") : null;
-  try {
-    await ingestMemory(cleaned, agentResponse);
-    if (statusEl) updateIngestStatus(statusEl, "success");
-  } catch (err) {
-    console.error("XMem: save failed", err);
-    if (statusEl) updateIngestStatus(statusEl, "error");
+  if (xmemMode === "ingest") {
+    showIngestQueued();
   }
+
+  ingestionQueue.enqueue(cleaned);
   savedInputText = "";
 }
 
@@ -931,7 +1061,7 @@ function setupSidebarEvents(sidebar: HTMLElement) {
       const text = readEditorText(editor).trim();
       if (!text) return;
       try {
-        await ingestMemory(text);
+        await ingestMemory(text, "", xmemEffortLevel);
         showToast("Memory saved!");
       } catch {
         showToast("Failed to save memory", true);
@@ -1870,11 +2000,17 @@ function injectStyles() {
     .xmem-slash-option {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 10px;
       padding: 9px 12px;
       border-radius: 6px;
       cursor: pointer;
       transition: background 0.12s ease;
+    }
+    .xmem-slash-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .xmem-slash-option:hover,
     .xmem-slash-option.xmem-slash-selected {
@@ -1925,6 +2061,56 @@ function injectStyles() {
     }
     .xmem-slash-light .xmem-slash-cmd { color: #27272a; }
     .xmem-slash-light .xmem-slash-desc { color: #a1a1aa; }
+
+    /* ═══ Effort Toggle (inside slash dropdown) ═══ */
+    .xmem-effort-high-warn {
+      color: #fb923c !important;
+      font-weight: 500;
+    }
+    
+    .xmem-slash-right {
+      display: flex;
+      align-items: center;
+    }
+
+    .xmem-switch-btn {
+      position: relative;
+      width: 28px;
+      height: 16px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.15);
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.2s ease;
+    }
+    .xmem-switch-btn.xmem-switch-on {
+      background: #fb923c;
+    }
+    .xmem-switch-knob {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .xmem-switch-btn.xmem-switch-on .xmem-switch-knob {
+      transform: translateX(12px);
+    }
+
+    /* ── Effort Toggle Light Theme ── */
+    .xmem-slash-light .xmem-effort-high-warn {
+      color: #ea580c !important;
+    }
+    .xmem-slash-light .xmem-switch-btn {
+      background: #d4d4d8;
+    }
+    .xmem-slash-light .xmem-switch-btn.xmem-switch-on {
+      background: #ea580c;
+    }
 
     /* ═══ IDE Panel ═══ */
     #xmem-ide-panel {
@@ -2377,6 +2563,49 @@ function injectStyles() {
       animation: xmem-spin 0.7s linear infinite;
       flex-shrink: 0;
     }
+
+    /* ═══ Ingestion Queue Badge ═══ */
+    .xmem-queue-badge {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 2147483646;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      pointer-events: none;
+
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(24, 24, 30, 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(161,161,170, 0.12);
+      color: #a1a1aa;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+    .xmem-queue-badge.xmem-queue-visible {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .xmem-queue-badge.xmem-queue-error {
+      border-color: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+    }
+    .xmem-queue-spinner {
+      width: 10px; height: 10px;
+      border: 1.5px solid rgba(161,161,170, 0.15);
+      border-top-color: #71717a;
+      border-radius: 50%;
+      animation: xmem-spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -2555,7 +2784,7 @@ function showHighlightBtn(sel: Selection, e: MouseEvent) {
       }
 
       try {
-        await ingestMemory(textToSave);
+        await ingestMemory(textToSave, "", xmemEffortLevel);
       } catch (err) {
         console.error("XMem highlight save failed", err);
       }
@@ -3120,6 +3349,27 @@ function checkSlashCommand(editor: HTMLElement) {
   showSlashDropdown(filtered, caret, editor, prefix);
 }
 
+function wireEffortToggle(dropdownEl: HTMLElement, options: SlashOption[], caret: CaretXY, editor: HTMLElement, currentPrefix: string) {
+  dropdownEl.querySelectorAll<HTMLElement>(".xmem-switch-btn").forEach((btn) => {
+    btn.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const level = btn.dataset.effort as EffortLevel;
+      if (level && (level === "low" || level === "high")) {
+        xmemEffortLevel = level;
+        if (chrome?.storage?.sync) {
+          chrome.storage.sync.set({ xmem_effort_level: level });
+        }
+        showSlashDropdown(options, caret, editor, currentPrefix);
+      }
+    });
+  });
+}
+
 function showSlashDropdown(
   options: SlashOption[],
   caret: CaretXY,
@@ -3137,14 +3387,35 @@ function showSlashDropdown(
 
   slashDropdownEl.innerHTML = options
     .map(
-      (opt, i) => `
+      (opt, i) => {
+        const isIngest = opt.mode === "ingest";
+        const isHigh = isIngest && xmemEffortLevel === "high";
+        
+        const descText = isHigh ? "Higher cost, Better memories" : opt.desc;
+        const descClass = isHigh ? "xmem-slash-desc xmem-effort-high-warn" : "xmem-slash-desc";
+
+        let html = `
     <div class="xmem-slash-option ${i === slashSelectedIdx ? "xmem-slash-selected" : ""}" data-mode="${opt.mode}">
-      <div class="xmem-slash-icon">${opt.icon}</div>
-      <div class="xmem-slash-text">
-        <span class="xmem-slash-cmd">${opt.command}</span>
-        <span class="xmem-slash-desc">${opt.desc}</span>
-      </div>
-    </div>`,
+      <div class="xmem-slash-left">
+        <div class="xmem-slash-icon">${opt.icon}</div>
+        <div class="xmem-slash-text">
+          <span class="xmem-slash-cmd">${opt.command}</span>
+          <span class="${descClass}">${descText}</span>
+        </div>
+      </div>`;
+
+        if (isIngest) {
+          html += `
+      <div class="xmem-slash-right">
+        <button class="xmem-switch-btn ${isHigh ? "xmem-switch-on" : ""}" data-effort="${isHigh ? "low" : "high"}" title="Deep Extraction Effort">
+          <div class="xmem-switch-knob"></div>
+        </button>
+      </div>`;
+        }
+
+        html += `</div>`;
+        return html;
+      },
     )
     .join("");
 
@@ -3177,6 +3448,8 @@ function showSlashDropdown(
         if (mode) activateSlashMode(mode, editor, currentPrefix);
       });
     });
+
+  wireEffortToggle(slashDropdownEl, options, caret, editor, currentPrefix);
 }
 
 function dismissSlashDropdown() {
@@ -3594,7 +3867,7 @@ function attachTreeToggleListeners(container: HTMLElement) {
 function loadSavedMode() {
   if (chrome?.storage?.sync) {
     chrome.storage.sync.get(
-      ["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo"],
+      ["xmem_mode", "xmem_ide_org_id", "xmem_ide_repo", "xmem_effort_level"],
       (data) => {
         if (
           data.xmem_mode === "ingest" ||
@@ -3603,6 +3876,9 @@ function loadSavedMode() {
           data.xmem_mode === "repo"
         ) {
           xmemMode = data.xmem_mode;
+        }
+        if (data.xmem_effort_level === "low" || data.xmem_effort_level === "high") {
+          xmemEffortLevel = data.xmem_effort_level;
         }
         ideOrgId = data.xmem_ide_org_id || "";
         ideRepo = data.xmem_ide_repo || "";

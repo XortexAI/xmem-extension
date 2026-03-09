@@ -130,15 +130,17 @@ const apiQueue = new RequestQueue();
 export async function ingestMemory(
   text: string,
   agentResponse: string = '',
+  effortLevel: 'low' | 'high' = 'low',
 ): Promise<IngestResult> {
   return apiQueue.enqueue(async () => {
     const { client, userId } = await getClient();
-    console.log('[XMem] Ingesting memory for user:', userId);
+    console.log('[XMem] Ingesting memory for user:', userId, 'effort:', effortLevel);
     try {
       const result = await client.ingest({
         user_query: text,
         agent_response: agentResponse,
         user_id: userId,
+        effort_level: effortLevel,
       });
       console.log('[XMem] Ingest result:', result);
       return result;
