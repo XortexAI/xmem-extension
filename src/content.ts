@@ -295,11 +295,15 @@ function showGhost(
   const currentText = readEditorText(editor);
   const endsWithSpace = /[\s\n]$/.test(currentText);
   const startsWithPunctuation = /^[.,?!:;]/.test(answer);
-  
+
   let prefix = "";
   if (currentText.endsWith("?")) {
     prefix = "  ⏎  "; // visual indicator of a newline answer
-  } else if (!endsWithSpace && !startsWithPunctuation && currentText.length > 0) {
+  } else if (
+    !endsWithSpace &&
+    !startsWithPunctuation &&
+    currentText.length > 0
+  ) {
     prefix = " ";
   }
 
@@ -378,11 +382,15 @@ function acceptGhost(): boolean {
   const currentText = readEditorText(editor);
   const endsWithSpace = /[\s\n]$/.test(currentText);
   const startsWithPunctuation = /^[.,?!:;]/.test(ghostAnswer);
-  
+
   let prefix = "";
   if (currentText.endsWith("?")) {
     prefix = "\n\n";
-  } else if (!endsWithSpace && !startsWithPunctuation && currentText.length > 0) {
+  } else if (
+    !endsWithSpace &&
+    !startsWithPunctuation &&
+    currentText.length > 0
+  ) {
     prefix = " ";
   }
 
@@ -1460,74 +1468,6 @@ function injectStyles() {
       to { opacity: 1; transform: none; }
     }
 
-    /* ═══ Fact Check Badge ═══ */
-    .xmem-fact-check-badge {
-      position: absolute;
-      top: -10px;
-      right: -10px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 8px;
-      border-radius: 20px;
-      font-size: 10px;
-      font-weight: 600;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      cursor: help;
-      z-index: 100;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      transition: all 0.2s;
-    }
-    
-    .xmem-dark-theme.xmem-fact-check-badge {
-      background: #3f3f46;
-      border: 1px solid #52525b;
-      color: #fbbf24;
-    }
-    
-    .xmem-light-theme.xmem-fact-check-badge {
-      background: #fef3c7;
-      border: 1px solid #fde68a;
-      color: #b45309;
-    }
-    
-    .xmem-fact-icon { display: flex; align-items: center; }
-    
-    .xmem-fact-tooltip {
-      position: absolute;
-      top: 100%;
-      right: 0;
-      margin-top: 6px;
-      width: 250px;
-      padding: 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      line-height: 1.5;
-      font-weight: 400;
-      opacity: 0;
-      visibility: hidden;
-      transition: opacity 0.2s, visibility 0.2s;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-      z-index: 101;
-      text-transform: none;
-    }
-    
-    .xmem-dark-theme .xmem-fact-tooltip {
-      background: #27272a;
-      border: 1px solid #3f3f46;
-      color: #e4e4e7;
-    }
-    
-    .xmem-light-theme .xmem-fact-tooltip {
-      background: #ffffff;
-      border: 1px solid #e4e4e7;
-      color: #27272a;
-    }
-    
-    .xmem-fact-check-badge:hover .xmem-fact-tooltip {
-      opacity: 1;
-      visibility: visible;
-    }
 
     /* ═══ Sidebar ═══ */
     #xmem-sidebar {
@@ -2381,87 +2321,6 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
-// ─── Fact Checker / Memory Conflict Detector ────────────────────────────────
-
-let factCheckTimer: ReturnType<typeof setTimeout> | null = null;
-const factCheckedNodes = new WeakSet<HTMLElement>();
-
-function observeAIResponsesForFactChecking() {
-  const mo = new MutationObserver(() => {
-    if (factCheckTimer) clearTimeout(factCheckTimer);
-    factCheckTimer = setTimeout(runFactCheck, 2000); // Wait for stream to settle a bit
-  });
-  mo.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  });
-}
-
-async function runFactCheck() {
-  // Only run fact checking in search mode
-  if (xmemMode !== "search") return;
-
-  const enabled = await new Promise<boolean>((resolve) => {
-    if (!chrome?.storage?.sync) return resolve(false);
-    chrome.storage.sync.get(["xmem_enabled"], (d) =>
-      resolve(d.xmem_enabled !== false),
-    );
-  });
-  if (!enabled) return;
-
-  const nodes = document.querySelectorAll<HTMLElement>(
-    '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
-  );
-  const latestNode = nodes[nodes.length - 1];
-
-  if (!latestNode || factCheckedNodes.has(latestNode)) return;
-
-  // Basic heuristic: check if it's done streaming (has enough length and hasn't changed in the last 2s)
-  const text = latestNode.textContent?.trim();
-  if (!text || text.length < 50) return;
-
-  // We only check once per response node to save API calls
-  factCheckedNodes.add(latestNode);
-
-  try {
-    // 1. Ask XMem to retrieve relevant facts about the AI's response text
-    // (In a real app, we'd have a specialized /fact_check endpoint, but we can simulate it with retrieveAnswer)
-    const query = `Is this true based on my memories? "${text.substring(0, 500)}"`;
-    const resp = await retrieveAnswer(query);
-
-    if (resp && resp.sources && resp.sources.length > 0) {
-      // Very simple heuristic: if XMem found sources and synthesized an answer, inject a subtle "Fact Check" badge
-      injectFactCheckBadge(latestNode, resp.answer);
-    }
-  } catch (err) {
-    console.error("XMem fact check error", err);
-  }
-}
-
-function injectFactCheckBadge(node: HTMLElement, feedback: string) {
-  // Ensure relative positioning context
-  if (getComputedStyle(node).position === "static") {
-    node.style.position = "relative";
-  }
-
-  const badge = document.createElement("div");
-  badge.className = `xmem-fact-check-badge ${isDarkBackground(document.body) ? "xmem-dark-theme" : "xmem-light-theme"}`;
-  badge.innerHTML = `
-    <span class="xmem-fact-icon">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-        <line x1="12" y1="9" x2="12" y2="13"/>
-        <line x1="12" y1="17" x2="12.01" y2="17"/>
-      </svg>
-    </span>
-    <span class="xmem-fact-text">Memory Match</span>
-    <div class="xmem-fact-tooltip">${escapeHtml(feedback)}</div>
-  `;
-
-  node.appendChild(badge);
-}
-
 // ─── Highlight-to-Remember ────────────────────────────────────────────────
 
 let highlightBtn: HTMLElement | null = null;
@@ -2723,7 +2582,11 @@ function showInjectionOverlay(editor: HTMLElement, label: string): HTMLElement {
   } else {
     const rect = editor.getBoundingClientRect();
     const cs = getComputedStyle(editor);
-    const textLen = (editor instanceof HTMLTextAreaElement ? editor.value : editor.textContent || "").length;
+    const textLen = (
+      editor instanceof HTMLTextAreaElement
+        ? editor.value
+        : editor.textContent || ""
+    ).length;
     overlay.style.left = `${rect.left + parseFloat(cs.paddingLeft) + Math.min(textLen * 7, rect.width * 0.6)}px`;
     overlay.style.top = `${rect.top + parseFloat(cs.paddingTop)}px`;
   }
@@ -2756,14 +2619,15 @@ function fireBypassSend(editor: HTMLElement) {
 
 const USER_MSG_SELECTORS = [
   '[data-message-author-role="user"]',
-  '.font-user-message',
-  'user-query',
-  '.user-turn',
-  '[data-is-user-message]',
-  '.whitespace-pre-wrap',
+  ".font-user-message",
+  "user-query",
+  ".user-turn",
+  "[data-is-user-message]",
+  ".whitespace-pre-wrap",
 ];
 
-const CONTEXT_TAG_RE = /<xmem_(?:code_context|memory_context)[^>]*>[\s\S]*?<\/xmem_(?:code_context|memory_context)>\s*/g;
+const CONTEXT_TAG_RE =
+  /<xmem_(?:code_context|memory_context)[^>]*>[\s\S]*?<\/xmem_(?:code_context|memory_context)>\s*/g;
 
 function scrubContextFromLastUserMessage() {
   let attempts = 0;
@@ -2793,9 +2657,17 @@ function scrubContextFromLastUserMessage() {
         CONTEXT_TAG_RE.lastIndex = 0;
 
         let accumulated = "";
-        const tagStart = fullText.search(/<xmem_(?:code_context|memory_context)/);
-        const tagEndMatch = fullText.match(/<\/xmem_(?:code_context|memory_context)>\s*/);
-        if (tagStart === -1 || !tagEndMatch || tagEndMatch.index === undefined) {
+        const tagStart = fullText.search(
+          /<xmem_(?:code_context|memory_context)/,
+        );
+        const tagEndMatch = fullText.match(
+          /<\/xmem_(?:code_context|memory_context)>\s*/,
+        );
+        if (
+          tagStart === -1 ||
+          !tagEndMatch ||
+          tagEndMatch.index === undefined
+        ) {
           if (attempts < maxAttempts) setTimeout(poll, 200);
           return;
         }
@@ -3027,7 +2899,6 @@ function startObserver() {
     childList: true,
     subtree: true,
   });
-  observeAIResponsesForFactChecking();
   setupHighlightToRemember();
   mainLoop();
 }
@@ -3131,7 +3002,10 @@ function showSlashDropdown(
     slashDropdownEl.id = "xmem-slash-dropdown";
     document.body.appendChild(slashDropdownEl);
   }
-  slashDropdownEl.classList.toggle("xmem-slash-light", !isDarkBackground(document.body));
+  slashDropdownEl.classList.toggle(
+    "xmem-slash-light",
+    !isDarkBackground(document.body),
+  );
 
   slashSelectedIdx = Math.min(slashSelectedIdx, options.length - 1);
 
@@ -3501,7 +3375,8 @@ function setupIdePanelEvents() {
         } else if (chunk.type === "done") {
           if (sourcesHtml) {
             const answerDiv = resultDiv.querySelector(".xmem-answer");
-            if (answerDiv) answerDiv.insertAdjacentHTML('beforeend', sourcesHtml);
+            if (answerDiv)
+              answerDiv.insertAdjacentHTML("beforeend", sourcesHtml);
           }
         }
       });
