@@ -609,26 +609,20 @@ function updateIngestStatus(el: HTMLElement, status: "success" | "error") {
   );
 }
 
-function showIngestQueued() {
+function showMemorizingBanner(): HTMLElement {
   document.querySelectorAll(".xmem-ingest-status").forEach((el) => el.remove());
 
   const banner = document.createElement("div");
-  banner.className = "xmem-ingest-status xmem-ingest-success";
+  banner.className = "xmem-ingest-status xmem-ingest-pending";
   banner.innerHTML = `
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="20 6 9 17 4 12"/>
-    </svg>
-    <span>Conversation memorized</span>
+    <div class="xmem-ingest-spinner"></div>
+    <span>Memorizing conversation…</span>
   `;
 
   document.body.appendChild(banner);
   requestAnimationFrame(() => banner.classList.add("xmem-status-visible"));
 
-  setTimeout(() => {
-    banner.classList.remove("xmem-status-visible");
-    setTimeout(() => banner.remove(), 400);
-  }, 3000);
+  return banner;
 }
 
 // ─── Ingestion Queue ──────────────────────────────────────────────────────
@@ -636,25 +630,29 @@ function showIngestQueued() {
 interface IngestQueueItem {
   id: number;
   userText: string;
+  effortLevel: EffortLevel;
   timestamp: number;
 }
-
-let queueBadgeEl: HTMLElement | null = null;
 
 class IngestionQueue {
   private queue: IngestQueueItem[] = [];
   private processing = false;
   private nextId = 1;
+  private failedCount = 0;
+  private successCount = 0;
 
-  enqueue(userText: string) {
+  enqueue(userText: string, effort: EffortLevel) {
     this.queue.push({
       id: this.nextId++,
       userText,
+      effortLevel: effort,
       timestamp: Date.now(),
     });
-    this.renderBadge();
+    console.log(`[XMem] Queue: enqueued item #${this.nextId - 1}, ${this.queue.length} pending`);
 
     if (!this.processing) {
+      this.failedCount = 0;
+      this.successCount = 0;
       this.processNext();
     }
   }
@@ -662,71 +660,81 @@ class IngestionQueue {
   private async processNext() {
     if (this.queue.length === 0) {
       this.processing = false;
-      this.hideBadge();
+      // Queue fully drained — show a single completion banner
+      if (this.failedCount > 0 && this.successCount === 0) {
+        this.showQueueResult("error");
+      } else if (this.failedCount > 0) {
+        this.showQueueResult("partial");
+      } else if (this.successCount > 0) {
+        this.showQueueResult("success");
+      }
+      this.failedCount = 0;
+      this.successCount = 0;
       return;
     }
 
     this.processing = true;
     const item = this.queue[0];
-    this.renderBadge();
 
     try {
-      const agentResponse = await captureLatestAgentResponse();
-      await ingestMemory(item.userText, agentResponse, xmemEffortLevel);
+      await ingestMemory(item.userText, "", item.effortLevel);
       this.queue.shift();
+      this.successCount++;
       console.log(`[XMem] Queue: ingested item #${item.id}, ${this.queue.length} remaining`);
     } catch (err) {
       console.error(`[XMem] Queue: ingestion failed for item #${item.id}`, err);
       this.queue.shift();
-      this.flashError();
+      this.failedCount++;
     }
 
-    this.renderBadge();
     this.processNext();
   }
 
-  private ensureBadge() {
-    if (queueBadgeEl) return;
-    queueBadgeEl = document.createElement("div");
-    queueBadgeEl.className = "xmem-queue-badge";
-    document.body.appendChild(queueBadgeEl);
-  }
+  private showQueueResult(result: "success" | "error" | "partial") {
+    // Remove any previous ingest status
+    document.querySelectorAll(".xmem-ingest-status").forEach((el) => el.remove());
 
-  private renderBadge() {
-    this.ensureBadge();
-    const pending = this.queue.length;
+    const banner = document.createElement("div");
 
-    if (pending === 0) {
-      this.hideBadge();
-      return;
+    if (result === "success") {
+      banner.className = "xmem-ingest-status xmem-ingest-success";
+      banner.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+        <span>All conversations memorized</span>
+      `;
+    } else if (result === "partial") {
+      banner.className = "xmem-ingest-status xmem-ingest-error";
+      banner.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+        <span>Some conversations failed to memorize</span>
+      `;
+    } else {
+      banner.className = "xmem-ingest-status xmem-ingest-error";
+      banner.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
+          <line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+        <span>Memory save failed</span>
+      `;
     }
 
-    queueBadgeEl!.innerHTML = `
-      <div class="xmem-queue-spinner"></div>
-      <span>Syncing${pending > 1 ? ` ${pending} conversations` : ""}…</span>
-    `;
-    queueBadgeEl!.classList.add("xmem-queue-visible");
-  }
+    document.body.appendChild(banner);
+    requestAnimationFrame(() => banner.classList.add("xmem-status-visible"));
 
-  private hideBadge() {
-    if (!queueBadgeEl) return;
-    queueBadgeEl.classList.remove("xmem-queue-visible");
-  }
-
-  private flashError() {
-    this.ensureBadge();
-    queueBadgeEl!.innerHTML = `
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
-        <line x1="9" y1="9" x2="15" y2="15"/>
-      </svg>
-      <span>Sync failed — will retry next turn</span>
-    `;
-    queueBadgeEl!.classList.add("xmem-queue-visible", "xmem-queue-error");
+    const timeout = result === "success" ? 3000 : 5000;
     setTimeout(() => {
-      queueBadgeEl?.classList.remove("xmem-queue-visible", "xmem-queue-error");
-    }, 4000);
+      banner.classList.remove("xmem-status-visible");
+      setTimeout(() => banner.remove(), 400);
+    }, timeout);
   }
 
   get length() {
@@ -740,9 +748,12 @@ class IngestionQueue {
 
 const ingestionQueue = new IngestionQueue();
 
-// ─── Save Conversation (non-blocking, queue-based) ───────────────────────
+// ─── Save Conversation (queue-based for ingest, direct for search/ide) ───
 
 async function saveConversation() {
+  // IDE and repo modes are for code context only — never ingest
+  if (xmemMode === "ide" || xmemMode === "repo") return;
+
   const enabled = await new Promise<boolean>((resolve) => {
     if (!chrome?.storage?.sync) return resolve(false);
     chrome.storage.sync.get(["xmem_enabled"], (d) =>
@@ -758,47 +769,35 @@ async function saveConversation() {
 
   triggerSidecar(cleaned);
 
-  if (xmemMode === "ingest") {
-    showIngestQueued();
-  }
+  // Capture effort level before any async work
+  const effortAtSend = xmemEffortLevel;
 
-  ingestionQueue.enqueue(cleaned);
-  savedInputText = "";
-}
-
-async function captureLatestAgentResponse(): Promise<string> {
-  // Basic wait for the AI to start generating
-  await new Promise((r) => setTimeout(r, 2000));
-
-  function getLatestNode() {
-    const nodes = document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
-    );
-    return nodes.length > 0 ? nodes[nodes.length - 1] : null;
-  }
-
-  let node = getLatestNode();
-  if (!node) return "";
-  let text = node.textContent?.trim() || "";
-
-  // Wait until the text stops changing (streaming has completed)
-  let stableCount = 0;
-  const maxWaitLoops = 60; // Max 60 seconds of waiting
-  for (let i = 0; i < maxWaitLoops; i++) {
-    await new Promise((r) => setTimeout(r, 1000));
-    node = getLatestNode();
-    const newText = node?.textContent?.trim() || "";
-    if (newText === text && text.length > 0) {
-      stableCount++;
-      if (stableCount >= 2) break; // Stable for 2 consecutive seconds
-    } else {
-      stableCount = 0;
+  // If high mode was active, auto-switch to low immediately
+  if (effortAtSend === "high") {
+    xmemEffortLevel = "low";
+    if (chrome?.storage?.sync) {
+      chrome.storage.sync.set({ xmem_effort_level: "low" });
     }
-    text = newText;
   }
 
-  // Return full captured response
-  return text;
+  if (xmemMode === "ingest") {
+    // Queue-based: no UI shown, user can keep sending messages.
+    // A single banner appears when the entire queue finishes.
+    ingestionQueue.enqueue(cleaned, effortAtSend);
+  } else {
+    // Non-ingest modes: show "Memorizing" banner and process directly
+    const banner = showMemorizingBanner();
+    try {
+      await ingestMemory(cleaned, "", effortAtSend);
+      console.log("[XMem] Ingestion complete");
+      updateIngestStatus(banner, "success");
+    } catch (err) {
+      console.error("[XMem] Ingestion failed", err);
+      updateIngestStatus(banner, "error");
+    }
+  }
+
+  savedInputText = "";
 }
 
 // ─── Memory Sidecar ───────────────────────────────────────────────────────
@@ -2504,48 +2503,7 @@ function injectStyles() {
       flex-shrink: 0;
     }
 
-    /* ═══ Ingestion Queue Badge ═══ */
-    .xmem-queue-badge {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      position: fixed;
-      bottom: 16px;
-      right: 16px;
-      z-index: 2147483646;
-      opacity: 0;
-      transform: translateY(8px);
-      transition: opacity 0.3s ease, transform 0.3s ease;
-      pointer-events: none;
-
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 7px 14px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 500;
-      background: rgba(24, 24, 30, 0.85);
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(161,161,170, 0.12);
-      color: #a1a1aa;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-    }
-    .xmem-queue-badge.xmem-queue-visible {
-      opacity: 1;
-      transform: translateY(0);
-      pointer-events: auto;
-    }
-    .xmem-queue-badge.xmem-queue-error {
-      border-color: rgba(239, 68, 68, 0.2);
-      color: #ef4444;
-    }
-    .xmem-queue-spinner {
-      width: 10px; height: 10px;
-      border: 1.5px solid rgba(161,161,170, 0.15);
-      border-top-color: #71717a;
-      border-radius: 50%;
-      animation: xmem-spin 0.7s linear infinite;
-      flex-shrink: 0;
-    }
+    /* Queue badge CSS removed — no longer needed */
   `;
   document.head.appendChild(style);
 }
@@ -2885,7 +2843,6 @@ function scrubContextFromLastUserMessage() {
         }
         CONTEXT_TAG_RE.lastIndex = 0;
 
-        let accumulated = "";
         const tagStart = fullText.search(
           /<xmem_(?:code_context|memory_context)/,
         );
@@ -2902,6 +2859,8 @@ function scrubContextFromLastUserMessage() {
         }
         const tagEnd = tagEndMatch.index + tagEndMatch[0].length;
 
+        // Collect text nodes that were modified so we can clean up empty wrappers
+        const modifiedNodes: Text[] = [];
         let pos = 0;
         for (const tn of textNodes) {
           const val = tn.nodeValue || "";
@@ -2914,7 +2873,43 @@ function scrubContextFromLastUserMessage() {
           const cutFrom = Math.max(0, tagStart - nodeStart);
           const cutTo = Math.min(val.length, tagEnd - nodeStart);
           tn.nodeValue = val.slice(0, cutFrom) + val.slice(cutTo);
+          modifiedNodes.push(tn);
         }
+
+        // Clean up empty wrapper elements that held the context tags.
+        // Walk up from each modified text node and hide/remove any elements
+        // that are now empty, so no colored residue remains.
+        for (const tn of modifiedNodes) {
+          let el: HTMLElement | null = tn.parentElement;
+          while (el && el !== last) {
+            const content = (el.textContent || "").trim();
+            if (content.length === 0) {
+              // Completely empty — remove from DOM
+              const parent = el.parentElement;
+              el.remove();
+              el = parent as HTMLElement | null;
+            } else {
+              // Not empty but might have leftover whitespace-only spans
+              // Hide any child elements that are now empty
+              el.querySelectorAll<HTMLElement>("*").forEach((child) => {
+                if ((child.textContent || "").trim().length === 0 && child.children.length === 0) {
+                  child.style.display = "none";
+                }
+              });
+              break;
+            }
+          }
+        }
+
+        // Second pass: hide any remaining empty block-level elements inside
+        // the message container that might cause visible colored bars
+        last.querySelectorAll<HTMLElement>("p, div, span, pre, code").forEach((el) => {
+          const txt = (el.textContent || "").trim();
+          if (txt.length === 0 && el.children.length === 0) {
+            el.style.display = "none";
+          }
+        });
+
         return;
       }
     }
@@ -3220,25 +3215,33 @@ function checkSlashCommand(editor: HTMLElement) {
   showSlashDropdown(filtered, caret, editor, prefix);
 }
 
-function wireEffortToggle(dropdownEl: HTMLElement, options: SlashOption[], caret: CaretXY, editor: HTMLElement, currentPrefix: string) {
-  dropdownEl.querySelectorAll<HTMLElement>(".xmem-switch-btn").forEach((btn) => {
-    btn.addEventListener("mousedown", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-    });
-    btn.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      const level = btn.dataset.effort as EffortLevel;
-      if (level && (level === "low" || level === "high")) {
-        xmemEffortLevel = level;
-        if (chrome?.storage?.sync) {
-          chrome.storage.sync.set({ xmem_effort_level: level });
+function wireEffortToggle(
+  dropdownEl: HTMLElement,
+  options: SlashOption[],
+  caret: CaretXY,
+  editor: HTMLElement,
+  currentPrefix: string,
+) {
+  dropdownEl
+    .querySelectorAll<HTMLElement>(".xmem-switch-btn")
+    .forEach((btn) => {
+      btn.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      });
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const level = btn.dataset.effort as EffortLevel;
+        if (level && (level === "low" || level === "high")) {
+          xmemEffortLevel = level;
+          if (chrome?.storage?.sync) {
+            chrome.storage.sync.set({ xmem_effort_level: level });
+          }
+          showSlashDropdown(options, caret, editor, currentPrefix);
         }
-        showSlashDropdown(options, caret, editor, currentPrefix);
-      }
+      });
     });
-  });
 }
 
 function showSlashDropdown(
@@ -3260,15 +3263,16 @@ function showSlashDropdown(
   slashSelectedIdx = Math.min(slashSelectedIdx, options.length - 1);
 
   slashDropdownEl.innerHTML = options
-    .map(
-      (opt, i) => {
-        const isIngest = opt.mode === "ingest";
-        const isHigh = isIngest && xmemEffortLevel === "high";
-        
-        const descText = isHigh ? "Higher cost, Better memories" : opt.desc;
-        const descClass = isHigh ? "xmem-slash-desc xmem-effort-high-warn" : "xmem-slash-desc";
+    .map((opt, i) => {
+      const isIngest = opt.mode === "ingest";
+      const isHigh = isIngest && xmemEffortLevel === "high";
 
-        let html = `
+      const descText = isHigh ? "Higher cost, Better memories" : opt.desc;
+      const descClass = isHigh
+        ? "xmem-slash-desc xmem-effort-high-warn"
+        : "xmem-slash-desc";
+
+      let html = `
     <div class="xmem-slash-option ${i === slashSelectedIdx ? "xmem-slash-selected" : ""}" data-mode="${opt.mode}">
       <div class="xmem-slash-left">
         <div class="xmem-slash-icon">${opt.icon}</div>
@@ -3278,19 +3282,18 @@ function showSlashDropdown(
         </div>
       </div>`;
 
-        if (isIngest) {
-          html += `
+      if (isIngest) {
+        html += `
       <div class="xmem-slash-right">
         <button class="xmem-switch-btn ${isHigh ? "xmem-switch-on" : ""}" data-effort="${isHigh ? "low" : "high"}" title="Deep Extraction Effort">
           <div class="xmem-switch-knob"></div>
         </button>
       </div>`;
-        }
+      }
 
-        html += `</div>`;
-        return html;
-      },
-    )
+      html += `</div>`;
+      return html;
+    })
     .join("");
 
   slashDropdownEl.style.position = "fixed";
@@ -3550,16 +3553,6 @@ function setupIdePanelEvents() {
     .querySelector(".xmem-ide-close-btn")
     ?.addEventListener("click", () => {
       closeIdePanel();
-      xmemMode = "search";
-      if (chrome?.storage?.sync)
-        chrome.storage.sync.set({ xmem_mode: "search" });
-      showToast("Mode: Search");
-      const editor = findEditor();
-      if (editor) {
-        ensureChip(editor);
-        positionChip(editor);
-        showChip();
-      }
     });
 
   idePanelEl
@@ -3752,7 +3745,10 @@ function loadSavedMode() {
         ) {
           xmemMode = data.xmem_mode;
         }
-        if (data.xmem_effort_level === "low" || data.xmem_effort_level === "high") {
+        if (
+          data.xmem_effort_level === "low" ||
+          data.xmem_effort_level === "high"
+        ) {
           xmemEffortLevel = data.xmem_effort_level;
         }
         ideOrgId = data.xmem_ide_org_id || "";
