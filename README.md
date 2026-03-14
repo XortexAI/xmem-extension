@@ -17,13 +17,13 @@ XMem watches what you type in ChatGPT, Claude, Gemini, Perplexity, and DeepSeek 
 
 ## See it in action
 
-### Setup
-
-https://github.com/user-attachments/assets/97793cf9-d247-4d02-9c31-3cc9bbbf89aa
-
 ### Demo
 
 https://github.com/user-attachments/assets/8e3349ab-63c9-4046-821d-ca8097948440
+
+### Setup
+
+https://github.com/user-attachments/assets/97793cf9-d247-4d02-9c31-3cc9bbbf89aa
 
 ---
 
