@@ -49,11 +49,11 @@ Tab to accept  ·  Click chip to browse  ·  Memories inject into your prompt
 
 ## Features
 
-### $\color{#4285F4}{\textsf{Live suggestions}}$
+### Live suggestions
 
 As you type in any supported AI chat, XMem performs semantic search against your memory store and renders **ghost text** inline — press **Tab** to accept, **Escape** to dismiss. A floating chip displays the count of matching memories. Searches fire only after 8+ characters and only when the cursor is at the end of input.
 
-### $\color{#34A853}{\textsf{Sidebar panel}}$ &ensp; `Ctrl+Shift+M`
+### Sidebar panel &ensp; `Ctrl+Shift+M`
 
 | Tab | What it does |
 |-----|-------------|
@@ -61,11 +61,11 @@ As you type in any supported AI chat, XMem performs semantic search against your
 | **Ask Memory** | Ask natural-language questions — get LLM-generated answers backed by your stored memories |
 | **Settings** | Connection status, configured domains, version info |
 
-### $\color{#EA4335}{\textsf{Auto-save}}$
+### Auto-save
 
 Your outgoing messages are captured and ingested automatically after the AI finishes responding. You can also right-click any selected text on any page and choose **"Save to XMem Memory"**.
 
-### $\color{#FBBC04}{\textsf{Slash commands}}$
+### Slash commands
 
 | Command | Mode |
 |---------|------|
@@ -74,7 +74,7 @@ Your outgoing messages are captured and ingested automatically after the AI fini
 | `/Xide` | Auto-inject codebase context on send (IDE mode) |
 | `/Xrepo` | Browse and query your codebase structure via a file tree panel |
 
-### $\color{#A259FF}{\textsf{IDE / Code mode}}$
+### IDE / Code mode
 
 Browse a codebase directory tree from the left panel. Query it semantically ("What does the payment service do?") and get streaming responses with file and symbol references extracted automatically.
 
