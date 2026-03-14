@@ -493,11 +493,13 @@ async function runAutocomplete(queryText: string) {
 
 function findSendButton(): HTMLButtonElement | null {
   const sels = [
-    'button[data-testid="send-button"]',
+    'button[data-testid="send-button"]',       // ChatGPT
     "#composer-submit-button",
-    'button[aria-label="Send Message"]',
+    'button[aria-label="Send Message"]',        // Claude / generic
     'button[aria-label="Send message"]',
-    'button[type="submit"]',
+    'button[data-testid="send-message-button"]', // Claude
+    'fieldset button[type="button"]:last-of-type', // Claude fallback
+    'button[type="submit"]',                    // generic
   ];
   for (const sel of sels) {
     const btn = document.querySelector<HTMLButtonElement>(sel);
@@ -508,11 +510,13 @@ function findSendButton(): HTMLButtonElement | null {
 
 function hookSendButtons() {
   const sels = [
-    'button[data-testid="send-button"]',
+    'button[data-testid="send-button"]',       // ChatGPT
     "#composer-submit-button",
-    'button[aria-label="Send Message"]',
+    'button[aria-label="Send Message"]',        // Claude / generic
     'button[aria-label="Send message"]',
-    'button[type="submit"]',
+    'button[data-testid="send-message-button"]', // Claude
+    'fieldset button[type="button"]:last-of-type', // Claude fallback
+    'button[type="submit"]',                    // generic
   ];
   for (const sel of sels) {
     const btn = document.querySelector<HTMLButtonElement>(sel);
@@ -625,11 +629,78 @@ function showMemorizingBanner(): HTMLElement {
   return banner;
 }
 
+// ─── Agent Response Detection ─────────────────────────────────────────────
+
+/**
+ * Selector for assistant/agent response elements across supported AI chat UIs.
+ */
+const ASSISTANT_MSG_SELECTORS = [
+  '[data-message-author-role="assistant"]', // ChatGPT
+  '.font-claude-message',                   // Claude (legacy)
+  '.standard-markdown',                     // Claude response content
+  'model-response',                         // Gemini
+  '.prose',                                 // Perplexity / generic
+].join(', ');
+
+/**
+ * Wait for the AI agent to finish generating its response.
+ * Detects completion by monitoring DOM stability (text length stops growing).
+ * Returns the final response text, or empty string on timeout.
+ */
+async function waitForAgentResponseComplete(): Promise<string> {
+  const MAX_POLL_MS = 5 * 60 * 1000; // 5 minute max wait for response
+  const STABILITY_MS = 3000;          // text must be stable for 3s to count as done
+  const POLL_INTERVAL = 1000;         // check every 1s
+  const startTime = Date.now();
+  let lastText = '';
+  let stableStart = 0;
+
+  console.log('[XMem] Waiting for agent response to complete…');
+
+  while (Date.now() - startTime < MAX_POLL_MS) {
+    const nodes = document.querySelectorAll<HTMLElement>(ASSISTANT_MSG_SELECTORS);
+    if (nodes.length > 0) {
+      const last = nodes[nodes.length - 1];
+      const currentText = (last.innerText || last.textContent || '').trim();
+
+      if (currentText.length > 0 && currentText === lastText) {
+        // Text is stable
+        if (!stableStart) stableStart = Date.now();
+        if (Date.now() - stableStart >= STABILITY_MS) {
+          console.log(`[XMem] Agent response complete (${currentText.length} chars)`);
+          return currentText;
+        }
+      } else {
+        // Text changed or first read
+        lastText = currentText;
+        stableStart = 0;
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+  }
+
+  console.warn('[XMem] Agent response wait timed out');
+  // Return whatever we have
+  return lastText;
+}
+
+/**
+ * Extract the text content of the most recent assistant message in the DOM.
+ */
+function extractLatestAgentResponse(): string {
+  const nodes = document.querySelectorAll<HTMLElement>(ASSISTANT_MSG_SELECTORS);
+  if (nodes.length === 0) return '';
+  const last = nodes[nodes.length - 1];
+  return (last.innerText || last.textContent || '').trim();
+}
+
 // ─── Ingestion Queue ──────────────────────────────────────────────────────
 
 interface IngestQueueItem {
   id: number;
   userText: string;
+  agentResponse: string;
   effortLevel: EffortLevel;
   timestamp: number;
 }
@@ -641,10 +712,11 @@ class IngestionQueue {
   private failedCount = 0;
   private successCount = 0;
 
-  enqueue(userText: string, effort: EffortLevel) {
+  enqueue(userText: string, agentResponse: string, effort: EffortLevel) {
     this.queue.push({
       id: this.nextId++,
       userText,
+      agentResponse,
       effortLevel: effort,
       timestamp: Date.now(),
     });
@@ -677,7 +749,7 @@ class IngestionQueue {
     const item = this.queue[0];
 
     try {
-      await ingestMemory(item.userText, "", item.effortLevel);
+      await ingestMemory(item.userText, item.agentResponse, item.effortLevel);
       this.queue.shift();
       this.successCount++;
       console.log(`[XMem] Queue: ingested item #${item.id}, ${this.queue.length} remaining`);
@@ -780,15 +852,20 @@ async function saveConversation() {
     }
   }
 
+  // ── Wait for agent response to complete, then proceed with ingestion ──
+  const agentResponseText = await waitForAgentResponseComplete();
+  const finalAgentResponse = agentResponseText || extractLatestAgentResponse();
+  console.log(`[XMem] Agent response captured (${finalAgentResponse.length} chars), proceeding with ingestion`);
+
   if (xmemMode === "ingest") {
     // Queue-based: no UI shown, user can keep sending messages.
     // A single banner appears when the entire queue finishes.
-    ingestionQueue.enqueue(cleaned, effortAtSend);
+    ingestionQueue.enqueue(cleaned, finalAgentResponse, effortAtSend);
   } else {
     // Non-ingest modes: show "Memorizing" banner and process directly
     const banner = showMemorizingBanner();
     try {
-      await ingestMemory(cleaned, "", effortAtSend);
+      await ingestMemory(cleaned, finalAgentResponse, effortAtSend);
       console.log("[XMem] Ingestion complete");
       updateIngestStatus(banner, "success");
     } catch (err) {
@@ -837,9 +914,7 @@ async function triggerSidecar(query: string) {
 async function pollForLatestAssistantMessage(): Promise<HTMLElement | null> {
   // Poll for up to 10 seconds to find the newly generated AI response container
   for (let i = 0; i < 20; i++) {
-    const nodes = document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="assistant"], .font-claude-message, model-response, .prose',
-    );
+    const nodes = document.querySelectorAll<HTMLElement>(ASSISTANT_MSG_SELECTORS);
     if (nodes.length > 0) {
       // Find the last one (the most recent response)
       const last = nodes[nodes.length - 1];
