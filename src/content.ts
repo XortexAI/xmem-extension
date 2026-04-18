@@ -46,7 +46,7 @@ let cachedResults: SourceRecord[] = [];
 
 // ─── Mode State ───────────────────────────────────────────────────────────
 
-type XMemMode = "ingest" | "search" | "ide" | "repo";
+type XMemMode = "ingest" | "search" | "repo";
 let xmemMode: XMemMode = "search";
 
 // ─── Effort Level State ───────────────────────────────────────────────────
@@ -532,7 +532,7 @@ function hookSendButtons() {
         "click",
         (e) => {
           if (
-            (xmemMode === "ide" || xmemMode === "search") &&
+            (xmemMode === "search") &&
             !bypassContextInjection
           ) {
             e.preventDefault();
@@ -830,7 +830,7 @@ const ingestionQueue = new IngestionQueue();
 
 async function saveConversation() {
   // IDE and repo modes are for code context only — never ingest
-  if (xmemMode === "ide" || xmemMode === "repo") return;
+  if (xmemMode === "repo") return;
 
   const enabled = await new Promise<boolean>((resolve) => {
     if (!chrome?.storage?.sync) return resolve(false);
@@ -3145,7 +3145,7 @@ function mainLoop() {
       if (
         ke.key === "Enter" &&
         !ke.shiftKey &&
-        (xmemMode === "ide" || xmemMode === "search")
+        (xmemMode === "search")
       ) {
         if (bypassContextInjection) {
           bypassContextInjection = false;
@@ -3249,14 +3249,6 @@ const SLASH_OPTIONS: SlashOption[] = [
     desc: "Auto-inject memory context on send",
     color: "#a1a1aa",
     icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
-  },
-  {
-    command: "Xide",
-    mode: "ide",
-    label: "IDE",
-    desc: "Auto-inject code context on send",
-    color: "#a1a1aa",
-    icon: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   },
   {
     command: "Xrepo",
@@ -3506,18 +3498,6 @@ function activateSlashMode(
     // Repo tree: open the left panel for browsing/query
     closeIdePanel();
     openIdePanel();
-  } else if (mode === "ide") {
-    // IDE: context injection mode — panel stays closed, we intercept send
-    closeIdePanel();
-    if (chrome?.storage?.sync) {
-      chrome.storage.sync.get(["xmem_ide_org_id", "xmem_ide_repo"], (data) => {
-        ideOrgId = data.xmem_ide_org_id || "";
-        ideRepo = data.xmem_ide_repo || "";
-        if (!ideOrgId || !ideRepo) {
-          showToast("Tip: use /repo to set up your codebase first", true);
-        }
-      });
-    }
   } else if (mode === "ingest") {
     closeIdePanel();
   }
@@ -3525,8 +3505,7 @@ function activateSlashMode(
   const labels: Record<XMemMode, string> = {
     ingest: "Ingest \u2014 saving memories",
     search: "Search \u2014 auto-injects memory context",
-    ide: "IDE \u2014 auto-injects code context on send",
-    repo: "Repo Tree \u2014 browse & query codebase",
+    repo: "Repo Tree \u2014 browse & drag code files",
   };
   showToast(`Mode: ${labels[mode]}`);
 }
@@ -3932,7 +3911,6 @@ function loadSavedMode() {
         if (
           data.xmem_mode === "ingest" ||
           data.xmem_mode === "search" ||
-          data.xmem_mode === "ide" ||
           data.xmem_mode === "repo"
         ) {
           xmemMode = data.xmem_mode;
