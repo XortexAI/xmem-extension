@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/8e3349ab-63c9-4046-821d-ca8097948440
 
 ### Setup
 
-https://github.com/user-attachments/assets/97793cf9-d247-4d02-9c31-3cc9bbbf89aa
+https://github.com/user-attachments/assets/72bf4e7d-2308-43ec-8da8-343f3293ac3a
 
 ---
 
