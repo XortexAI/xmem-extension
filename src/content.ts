@@ -15,10 +15,12 @@ import {
   streamCodeQuery,
   getDirectoryTree,
   listRepos,
+  listScannerRepos,
   type SourceRecord,
   type RetrieveResult,
   type DirectoryNode,
   type CodeQueryResult,
+  type ScannerRepo,
 } from "./api";
 
 // ─── Config ───────────────────────────────────────────────────────────────
@@ -60,6 +62,7 @@ let ideOrgId = "";
 let ideRepo = "";
 let ideTreeData: DirectoryNode | null = null;
 let bypassContextInjection = false;
+let cachedScannerRepos: ScannerRepo[] = [];
 
 // ─── Slash Command State ──────────────────────────────────────────────────
 
@@ -242,6 +245,9 @@ function ensureChip(anchor: HTMLElement): HTMLElement {
     e.stopPropagation();
     toggleSidebar();
   });
+
+  // Hide the memories chip completely
+  chipEl.style.display = "none";
 
   return chipEl;
 }
@@ -991,77 +997,18 @@ window.addEventListener("scroll", updateSidecarPosition, true);
 window.addEventListener("resize", updateSidecarPosition);
 setInterval(updateSidecarPosition, 200);
 
-// ─── Sidebar ──────────────────────────────────────────────────────────────
+// ─── Sidebar (REMOVED — only Xrepo panel remains) ───────────────────────
+// The old Memories/Ask sidebar has been removed.
+// The panel now only opens when user selects Xrepo mode.
+// For backward compat, createSidebar and toggleSidebar are no-ops.
 
 function createSidebar(): HTMLElement {
-  if (sidebarEl && document.body.contains(sidebarEl)) return sidebarEl;
-
-  sidebarEl = document.createElement("div");
-  sidebarEl.id = "xmem-sidebar";
-  sidebarEl.innerHTML = `
-    <div class="xmem-sb-header">
-      <div class="xmem-sb-logo">
-        <div class="xmem-sb-logo-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7l-3 3.5L9 16c-2-1.5-4-4-4-7a7 7 0 0 1 7-7z"/>
-            <circle cx="12" cy="9" r="2"/>
-          </svg>
-        </div>
-        <span>XMem</span>
-      </div>
-      <button class="xmem-sb-close-btn" id="xmem-sb-close" title="Close">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
-    </div>
-
-    <div class="xmem-sb-controls">
-      <div class="xmem-sb-segmented">
-        <button class="xmem-sb-seg active" data-tab="memories">Memories</button>
-        <button class="xmem-sb-seg" data-tab="ask">Ask</button>
-        <div class="xmem-sb-seg-indicator"></div>
-      </div>
-    </div>
-
-    <div class="xmem-sb-search-wrap">
-      <div class="xmem-sb-search-bar">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input type="text" id="xmem-sb-search" placeholder="Search memories..." />
-      </div>
-    </div>
-
-    <div class="xmem-sb-meta" id="xmem-sb-meta"></div>
-
-    <div class="xmem-sb-content" id="xmem-sb-content">
-      <div class="xmem-sb-panel active" id="xmem-panel-memories"></div>
-      <div class="xmem-sb-panel" id="xmem-panel-ask">
-        <div class="xmem-ask-container">
-          <div class="xmem-ask-label">Ask your memories anything</div>
-          <textarea id="xmem-ask-input" placeholder="e.g. What's my work experience?" rows="3"></textarea>
-          <button class="xmem-ask-btn" id="xmem-ask-btn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-            Ask XMem
-          </button>
-          <div id="xmem-ask-result" class="xmem-ask-result"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="xmem-sb-footer">
-      <div class="xmem-sb-footer-inner">
-        <span class="xmem-sb-footer-text">XMem v1.0</span>
-        <div class="xmem-sb-kbd"><kbd>⌃</kbd><kbd>⇧</kbd><kbd>M</kbd></div>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(sidebarEl);
-  setupSidebarEvents(sidebarEl);
+  // No-op: sidebar removed
+  if (!sidebarEl) {
+    sidebarEl = document.createElement("div");
+    sidebarEl.id = "xmem-sidebar";
+    sidebarEl.style.display = "none";
+  }
   return sidebarEl;
 }
 
@@ -1224,27 +1171,23 @@ async function doManualSearch(query: string, localFilter?: string) {
 }
 
 function toggleSidebar() {
-  const sidebar = createSidebar();
-  sidebarOpen = !sidebarOpen;
-  sidebar.classList.toggle("xmem-sb-open", sidebarOpen);
-  if (sidebarOpen) {
-    renderMemories(cachedResults);
-    document.addEventListener("click", outsideClickHandler);
-    document.addEventListener("keydown", sidebarEscHandler);
-  } else {
-    document.removeEventListener("click", outsideClickHandler);
-    document.removeEventListener("keydown", sidebarEscHandler);
+  // Sidebar removed — open Xrepo panel instead if in repo mode
+  if (xmemMode === "repo") {
+    if (idePanelOpen) {
+      closeIdePanel();
+    } else {
+      openIdePanel();
+    }
   }
+  // Otherwise no-op: sidebar is removed
 }
 
-function outsideClickHandler(e: MouseEvent) {
-  if (sidebarEl && !sidebarEl.contains(e.target as Node)) {
-    if (sidebarOpen) toggleSidebar();
-  }
+function outsideClickHandler(_e: MouseEvent) {
+  // No-op: sidebar removed
 }
 
-function sidebarEscHandler(e: KeyboardEvent) {
-  if (e.key === "Escape" && sidebarOpen) toggleSidebar();
+function sidebarEscHandler(_e: KeyboardEvent) {
+  // No-op: sidebar removed
 }
 
 function updateMemoryMeta(count: number) {
@@ -2287,10 +2230,73 @@ function injectStyles() {
       gap: 5px;
       padding: 3px 10px;
       border-radius: 3px;
-      transition: background 0.1s;
-      cursor: default;
+      transition: background 0.1s, opacity 0.2s;
+      cursor: grab;
     }
-    .xmem-tree-file:hover { background: rgba(255,255,255,0.025); }
+    .xmem-tree-file:hover { background: rgba(255,255,255,0.04); }
+    .xmem-tree-file:active { cursor: grabbing; }
+    .xmem-tree-file.xmem-dragging {
+      opacity: 0.4;
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px dashed rgba(56, 189, 248, 0.3);
+    }
+    .xmem-tree-drag-grip {
+      width: 10px; height: 14px;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      color: #3f3f46;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .xmem-tree-file:hover .xmem-tree-drag-grip { opacity: 1; }
+
+    /* Drag hint bar at bottom */
+    .xmem-ide-drag-hint {
+      padding: 12px 18px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 10.5px;
+      color: #52525b;
+      font-style: italic;
+    }
+    .xmem-ide-drag-hint svg { flex-shrink: 0; color: #3f3f46; }
+
+    /* Scanner CTA link */
+    .xmem-ide-scanner-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 18px;
+      border-top: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+      font-size: 11px;
+      color: #71717a;
+      text-decoration: none;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+    .xmem-ide-scanner-link:hover {
+      background: rgba(255,255,255,0.03);
+      color: #a1a1aa;
+    }
+    .xmem-ide-scanner-link strong {
+      color: #d4d4d8;
+      font-weight: 600;
+    }
+    .xmem-ide-scanner-link:hover strong {
+      color: #e4e4e7;
+    }
+    .xmem-ide-scanner-arrow {
+      margin-left: auto;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .xmem-ide-scanner-link:hover .xmem-ide-scanner-arrow {
+      opacity: 1;
+    }
     .xmem-tree-name {
       font-size: 12px;
       color: #a1a1aa;
@@ -3533,7 +3539,7 @@ function applyIdePanelTheme() {
   idePanelEl.classList.toggle("xmem-ide-light", isLight);
 }
 
-function openIdePanel() {
+async function openIdePanel() {
   if (idePanelEl && document.body.contains(idePanelEl)) {
     idePanelEl.style.display = "flex";
     applyIdePanelTheme();
@@ -3543,6 +3549,14 @@ function openIdePanel() {
 
   idePanelEl = document.createElement("div");
   idePanelEl.id = "xmem-ide-panel";
+
+  // Auto-fetch scanner repos for this user
+  try {
+    cachedScannerRepos = await listScannerRepos();
+  } catch (err) {
+    console.error('[XMem] Failed to fetch scanner repos:', err);
+    cachedScannerRepos = [];
+  }
 
   if (chrome?.storage?.sync) {
     chrome.storage.sync.get(["xmem_ide_org_id", "xmem_ide_repo"], (data) => {
@@ -3571,6 +3585,45 @@ function renderIdePanel() {
 
   const isConfigured = ideOrgId && ideRepo;
 
+  // Build repo selector HTML from cached scanner repos
+  let repoSelectorHtml = '';
+  if (cachedScannerRepos.length > 0) {
+    const readyRepos = cachedScannerRepos.filter(r => r.phase1_status === 'complete');
+    if (readyRepos.length > 0) {
+      const options = readyRepos.map(r => {
+        const selected = (r.org === ideOrgId && r.repo === ideRepo) ? 'selected' : '';
+        const statusLabel = r.phase2_status === 'complete' ? '✓' : '⏳';
+        return `<option value="${escapeHtml(r.org)}/${escapeHtml(r.repo)}" ${selected}>${statusLabel} ${escapeHtml(r.org)}/${escapeHtml(r.repo)}</option>`;
+      }).join('');
+      repoSelectorHtml = `
+        <div class="xmem-ide-field">
+          <label>Your Indexed Repos</label>
+          <select id="xmem-ide-repo-select" style="
+            width: 100%; padding: 8px 11px;
+            background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 5px; color: #d4d4d8; font-size: 12px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+          ">
+            <option value="">Select a repository...</option>
+            ${options}
+          </select>
+        </div>
+      `;
+    } else {
+      repoSelectorHtml = `
+        <div style="padding: 8px 0; font-size: 11px; color: #71717a; font-style: italic;">
+          No repos ready yet. Index repos at <a href="https://xmem.in" target="_blank" style="color: #a1a1aa; text-decoration: underline;">xmem.in</a>
+        </div>
+      `;
+    }
+  } else {
+    repoSelectorHtml = `
+      <div style="padding: 8px 0; font-size: 11px; color: #71717a; font-style: italic;">
+        No indexed repos found. Index repos at <a href="https://xmem.in" target="_blank" style="color: #a1a1aa; text-decoration: underline;">xmem.in</a>
+      </div>
+    `;
+  }
+
   idePanelEl.innerHTML = `
     <div class="xmem-ide-header">
       <div class="xmem-ide-logo">
@@ -3579,7 +3632,7 @@ function renderIdePanel() {
             <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
           </svg>
         </div>
-        <span>xmem</span>
+        <span>xrepo</span>
       </div>
       <button class="xmem-ide-close-btn" title="Close">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -3589,13 +3642,14 @@ function renderIdePanel() {
     </div>
 
     <div class="xmem-ide-config">
+      ${repoSelectorHtml}
       <div class="xmem-ide-field">
         <label>Organization</label>
-        <input type="text" id="xmem-ide-org" placeholder="zinnia" value="${escapeHtml(ideOrgId)}" />
+        <input type="text" id="xmem-ide-org" placeholder="org-name" value="${escapeHtml(ideOrgId)}" />
       </div>
       <div class="xmem-ide-field">
         <label>Repository</label>
-        <input type="text" id="xmem-ide-repo" placeholder="payment-service" value="${escapeHtml(ideRepo)}" />
+        <input type="text" id="xmem-ide-repo" placeholder="repo-name" value="${escapeHtml(ideRepo)}" />
       </div>
       <button class="xmem-ide-load-btn" id="xmem-ide-load">
         ${isConfigured ? "Reload" : "Load"}
@@ -3603,19 +3657,23 @@ function renderIdePanel() {
     </div>
 
     <div class="xmem-ide-tree-container" id="xmem-ide-tree">
-      ${isConfigured && ideTreeData ? renderTreeHTML(ideTreeData) : '<div class="xmem-ide-empty">Configure organization and repository to begin.</div>'}
+      ${isConfigured && ideTreeData ? renderTreeHTML(ideTreeData) : '<div class="xmem-ide-empty">Select a repository to browse its structure.</div>'}
     </div>
 
-    <div class="xmem-ide-query-section">
-      <div class="xmem-ide-query-label">Search codebase</div>
-      <div class="xmem-ide-query-bar">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-        <input type="text" id="xmem-ide-query-input" placeholder="Ask about this codebase..." />
-      </div>
-      <div id="xmem-ide-query-result" class="xmem-ide-query-result"></div>
+    <div class="xmem-ide-drag-hint">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+      <span>Drag files onto ChatGPT / Claude to paste code</span>
     </div>
+
+    <a href="https://xmem.in/scanner" target="_blank" class="xmem-ide-scanner-link">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <span>Ask about your repos on <strong>xmem.in/scanner</strong></span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="xmem-ide-scanner-arrow">
+        <line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/>
+      </svg>
+    </a>
   `;
 
   setupIdePanelEvents();
@@ -3629,6 +3687,21 @@ function setupIdePanelEvents() {
     ?.addEventListener("click", () => {
       closeIdePanel();
     });
+
+  // Handle repo selector dropdown (from scanner repos)
+  const repoSelect = idePanelEl.querySelector("#xmem-ide-repo-select") as HTMLSelectElement;
+  if (repoSelect) {
+    repoSelect.addEventListener("change", () => {
+      const val = repoSelect.value;
+      if (val) {
+        const [org, repo] = val.split("/");
+        const orgInput = idePanelEl!.querySelector("#xmem-ide-org") as HTMLInputElement;
+        const repoInput = idePanelEl!.querySelector("#xmem-ide-repo") as HTMLInputElement;
+        if (orgInput) orgInput.value = org;
+        if (repoInput) repoInput.value = repo;
+      }
+    });
+  }
 
   idePanelEl
     .querySelector("#xmem-ide-load")
@@ -3664,6 +3737,7 @@ function setupIdePanelEvents() {
         ideTreeData = result.tree;
         treeContainer.innerHTML = renderTreeHTML(ideTreeData);
         attachTreeToggleListeners(treeContainer);
+        attachDragListeners(treeContainer);
       } catch (err) {
         treeContainer.innerHTML =
           '<div class="xmem-ide-empty">Failed to load directory tree</div>';
@@ -3671,75 +3745,25 @@ function setupIdePanelEvents() {
       }
     });
 
-  const queryInput = idePanelEl.querySelector(
-    "#xmem-ide-query-input",
-  ) as HTMLInputElement;
-  queryInput?.addEventListener("keydown", async (e) => {
-    if (e.key !== "Enter") return;
-    const q = queryInput.value.trim();
-    if (!q || !ideOrgId || !ideRepo) return;
-
-    const resultDiv = idePanelEl!.querySelector(
-      "#xmem-ide-query-result",
-    ) as HTMLElement;
-    resultDiv.innerHTML = '<div class="xmem-loader"></div>';
-
-    let answerText = "";
-    let sourcesHtml = "";
-    let started = false;
-
-    try {
-      await streamCodeQuery(ideOrgId, ideRepo, q, (chunk) => {
-        if (!started) {
-          started = true;
-          resultDiv.innerHTML = `
-            <div class="xmem-answer">
-              <div class="xmem-answer-text xmem-md-body"></div>
-            </div>`;
-        }
-
-        if (chunk.type === "status") {
-          const textDiv = resultDiv.querySelector(".xmem-answer-text");
-          if (textDiv && !answerText) {
-            textDiv.innerHTML = `<em>${escapeHtml(chunk.content)}</em>`;
-          }
-        } else if (chunk.type === "chunk") {
-          answerText += chunk.text;
-          const textDiv = resultDiv.querySelector(".xmem-answer-text");
-          if (textDiv) {
-            textDiv.innerHTML = renderMarkdown(answerText);
-          }
-        } else if (chunk.type === "sources") {
-          if (chunk.sources && chunk.sources.length > 0) {
-            sourcesHtml = `<div class="xmem-answer-sources"><span class="xmem-answer-sources-label">${chunk.sources.length} source${chunk.sources.length > 1 ? "s" : ""}</span></div>`;
-          }
-        } else if (chunk.type === "done") {
-          if (sourcesHtml) {
-            const answerDiv = resultDiv.querySelector(".xmem-answer");
-            if (answerDiv)
-              answerDiv.insertAdjacentHTML("beforeend", sourcesHtml);
-          }
-        }
-      });
-    } catch {
-      resultDiv.innerHTML =
-        '<div class="xmem-error">Failed to query codebase.</div>';
-    }
-  });
-
   idePanelEl.addEventListener("click", (e) => e.stopPropagation());
 
   const treeContainer = idePanelEl.querySelector(
     "#xmem-ide-tree",
   ) as HTMLElement;
-  if (treeContainer && ideTreeData) attachTreeToggleListeners(treeContainer);
+  if (treeContainer && ideTreeData) {
+    attachTreeToggleListeners(treeContainer);
+    attachDragListeners(treeContainer);
+  }
 }
 
 function renderTreeHTML(node: DirectoryNode, depth = 0): string {
   if (node.type === "file") {
     const ext = node.name.split(".").pop() || "";
     const iconClass = getFileIconClass(ext);
-    return `<div class="xmem-tree-file" style="padding-left: ${12 + depth * 16}px" data-path="${escapeHtml(node.path)}">
+    return `<div class="xmem-tree-file" style="padding-left: ${12 + depth * 16}px" data-path="${escapeHtml(node.path)}" draggable="true" title="Drag to paste code">
+      <span class="xmem-tree-drag-grip">
+        <svg width="8" height="10" viewBox="0 0 8 10" fill="currentColor"><circle cx="2" cy="1.5" r="1"/><circle cx="6" cy="1.5" r="1"/><circle cx="2" cy="5" r="1"/><circle cx="6" cy="5" r="1"/><circle cx="2" cy="8.5" r="1"/><circle cx="6" cy="8.5" r="1"/></svg>
+      </span>
       <span class="xmem-tree-icon ${iconClass}"></span>
       <span class="xmem-tree-name">${escapeHtml(node.name)}</span>
     </div>`;
@@ -3801,6 +3825,99 @@ function attachTreeToggleListeners(container: HTMLElement) {
       header.addEventListener("click", () => {
         const dir = header.parentElement;
         if (dir) dir.classList.toggle("xmem-tree-open");
+      });
+    });
+}
+
+/**
+ * Make every .xmem-tree-file element draggable.
+ * Strategy: pre-fetch file content on hover (mouseenter) so it's cached
+ * before the user starts dragging. dragstart is synchronous and can't await,
+ * so we must have the data ready.
+ */
+function attachDragListeners(container: HTMLElement) {
+  container
+    .querySelectorAll<HTMLElement>(".xmem-tree-file[draggable=true]")
+    .forEach((fileEl) => {
+      // Pre-fetch on hover
+      let fetchPromise: Promise<void> | null = null;
+      fileEl.addEventListener("mouseenter", () => {
+        if (fileEl.dataset.cachedContent || fetchPromise) return;
+        const filePath = fileEl.dataset.path;
+        if (!filePath || !ideOrgId || !ideRepo) return;
+
+        fetchPromise = (async () => {
+          try {
+            const { getConfig } = await import("./api");
+            const config = await getConfig();
+            const API_BASE_URL = "https://api.xmem.in";
+            const url = `${API_BASE_URL}/v1/code/file-content?org_id=${encodeURIComponent(ideOrgId)}&repo=${encodeURIComponent(ideRepo)}&file_path=${encodeURIComponent(filePath)}`;
+            const resp = await fetch(url, {
+              headers: { 'Authorization': `Bearer ${config.apiKey}` }
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              const content = data?.data?.content || data?.content || '';
+              fileEl.dataset.cachedContent = `// File: ${filePath}\n// Repo: ${ideOrgId}/${ideRepo}\n\n${content}`;
+            }
+          } catch (err) {
+            console.error('[XMem] Pre-fetch failed:', err);
+          }
+        })();
+      });
+
+      // dragstart — use cached content if available
+      fileEl.addEventListener("dragstart", (e) => {
+        const filePath = fileEl.dataset.path || "file";
+        const fileName = filePath.split("/").pop() || filePath;
+
+        fileEl.classList.add("xmem-dragging");
+        e.dataTransfer!.effectAllowed = "copy";
+
+        if (fileEl.dataset.cachedContent) {
+          e.dataTransfer!.setData("text/plain", fileEl.dataset.cachedContent);
+        } else {
+          e.dataTransfer!.setData("text/plain", `// File: ${filePath}\n// Content loading... Click the file to copy instead.`);
+        }
+      });
+
+      fileEl.addEventListener("dragend", () => {
+        fileEl.classList.remove("xmem-dragging");
+      });
+
+      // Click to copy
+      fileEl.addEventListener("click", async () => {
+        const filePath = fileEl.dataset.path;
+        if (!filePath) return;
+
+        // If cached, copy immediately
+        if (fileEl.dataset.cachedContent) {
+          await navigator.clipboard.writeText(fileEl.dataset.cachedContent);
+          showToast(`Copied ${filePath.split('/').pop()}`);
+          return;
+        }
+
+        // Otherwise fetch then copy
+        try {
+          const { getConfig } = await import("./api");
+          const config = await getConfig();
+          const url = `https://api.xmem.in/v1/code/file-content?org_id=${encodeURIComponent(ideOrgId)}&repo=${encodeURIComponent(ideRepo)}&file_path=${encodeURIComponent(filePath)}`;
+          const resp = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${config.apiKey}` }
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            const content = data?.data?.content || data?.content || '';
+            const formatted = `// File: ${filePath}\n// Repo: ${ideOrgId}/${ideRepo}\n\n${content}`;
+            fileEl.dataset.cachedContent = formatted;
+            await navigator.clipboard.writeText(formatted);
+            showToast(`Copied ${filePath.split('/').pop()}`);
+          } else {
+            showToast("Failed to fetch file", true);
+          }
+        } catch {
+          showToast("Network error", true);
+        }
       });
     });
 }

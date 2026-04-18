@@ -32,7 +32,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/content.ts-loader-B6eVEfgS.js"
+        "assets/content.ts-loader-DZDTax6x.js"
       ],
       "matches": [
         "*://chatgpt.com/*",
@@ -51,7 +51,8 @@
         "<all_urls>"
       ],
       "resources": [
-        "icons/*"
+        "icons/*",
+        "icons/logo.png"
       ],
       "use_dynamic_url": false
     },
@@ -65,9 +66,9 @@
         "*://www.perplexity.ai/*"
       ],
       "resources": [
-        "assets/api-B9mn3sQE.js",
-        "assets/index-DCh6icrO.js",
-        "assets/content.ts-BNeWrR_Y.js"
+        "assets/api-B-1Tes7C.js",
+        "assets/index-CsX1Wpgk.js",
+        "assets/content.ts-DXHI8QpS.js"
       ],
       "use_dynamic_url": false
     }

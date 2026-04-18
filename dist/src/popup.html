@@ -4,74 +4,176 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>XMem Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
-      width: 360px;
-      background: #0f0f11;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      width: 380px;
+      background: #0a0a0c;
       color: #e4e4e7;
       padding: 0;
+      overflow: hidden;
     }
 
-    .header {
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      padding: 20px;
+    /* ═══ Page Transitions ═══ */
+    .page { display: none; flex-direction: column; animation: fadeSlideIn 0.35s ease; }
+    .page.active { display: flex; }
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    /* ═══ Welcome Page ═══ */
+    #page-welcome {
+      align-items: center;
+      justify-content: center;
+      min-height: 420px;
+      padding: 40px 32px;
+      gap: 0;
+      text-align: center;
+    }
+    .welcome-logo {
+      width: 180px;
+      height: auto;
+      margin-bottom: 12px;
+      filter: invert(1);
+      opacity: 0.92;
+    }
+    .welcome-tagline {
+      font-size: 13px;
+      color: #71717a;
+      font-weight: 400;
+      letter-spacing: 0.3px;
+      margin-bottom: 36px;
+    }
+    .welcome-btns {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+      max-width: 260px;
+    }
+    .btn-welcome {
+      padding: 12px 20px;
+      border-radius: 10px;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      text-align: center;
+      transition: all 0.2s ease;
+      letter-spacing: 0.2px;
+      text-decoration: none;
+      display: block;
+    }
+    .btn-continue {
+      background: #fff;
+      color: #0a0a0c;
+    }
+    .btn-continue:hover {
+      background: #e4e4e7;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(255,255,255,0.08);
+    }
+    .btn-create {
+      background: transparent;
+      color: #a1a1aa;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .btn-create:hover {
+      border-color: rgba(255,255,255,0.15);
+      color: #e4e4e7;
+      background: rgba(255,255,255,0.03);
+    }
+    .welcome-note {
+      margin-top: 24px;
+      font-size: 11px;
+      color: #3f3f46;
+      line-height: 1.5;
+    }
+    .welcome-note a {
+      color: #71717a;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .welcome-note a:hover { color: #a1a1aa; }
+
+    /* ═══ Login Page ═══ */
+    #page-login {
+      min-height: 420px;
+      padding: 0;
+    }
+    .login-header {
       display: flex;
       align-items: center;
       gap: 12px;
-      border-bottom: 1px solid #27272a;
+      padding: 20px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
     }
-    .header-icon {
-      width: 36px; height: 36px;
-      background: linear-gradient(135deg, #7c3aed, #3b82f6);
-      border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px; font-weight: 700; color: white;
+    .login-logo {
+      width: 100px;
+      filter: invert(1);
+      opacity: 0.88;
     }
-    .header-text h1 { font-size: 16px; font-weight: 600; color: #fff; }
-    .header-text p { font-size: 11px; color: #a1a1aa; margin-top: 2px; }
-
-    .status-bar {
-      display: flex; align-items: center; gap: 8px;
-      padding: 10px 20px;
-      background: #18181b;
-      border-bottom: 1px solid #27272a;
+    .login-back {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #52525b;
+      cursor: pointer;
       font-size: 12px;
+      font-weight: 500;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: all 0.2s;
     }
-    .status-dot {
-      width: 8px; height: 8px; border-radius: 50%;
-      flex-shrink: 0;
+    .login-back:hover { color: #a1a1aa; background: rgba(255,255,255,0.04); }
+
+    .login-body {
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
     }
-    .status-dot.online { background: #22c55e; box-shadow: 0 0 6px #22c55e80; }
-    .status-dot.offline { background: #ef4444; box-shadow: 0 0 6px #ef444480; }
-    .status-dot.checking { background: #f59e0b; animation: pulse 1s infinite; }
-    @keyframes pulse { 50% { opacity: 0.4; } }
-
-    .body { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
-
     .field label {
-      display: block; font-size: 12px; font-weight: 500;
-      color: #a1a1aa; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #71717a;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
     }
-    .field input, .field select {
-      width: 100%; padding: 10px 12px;
-      background: #1e1e24; border: 1px solid #333; border-radius: 8px;
-      color: #e4e4e7; font-size: 13px;
-      transition: border-color 0.2s;
+    .field input {
+      width: 100%;
+      padding: 11px 14px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 8px;
+      color: #e4e4e7;
+      font-size: 13px;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s;
     }
-    .field input:focus, .field select:focus {
-      outline: none; border-color: #7c3aed;
+    .field input:focus {
+      outline: none;
+      border-color: rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.05);
     }
-    .field input::placeholder { color: #52525b; }
+    .field input::placeholder { color: #3f3f46; }
 
     .toggle-row {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 10px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
     }
     .toggle-row .label-group { display: flex; flex-direction: column; gap: 2px; }
     .toggle-row .label-group span:first-child { font-size: 13px; font-weight: 500; }
-    .toggle-row .label-group span:last-child { font-size: 11px; color: #71717a; }
+    .toggle-row .label-group span:last-child { font-size: 11px; color: #52525b; }
 
     .toggle {
       position: relative; width: 40px; height: 22px;
@@ -79,116 +181,286 @@
     .toggle input { opacity: 0; width: 0; height: 0; }
     .toggle .slider {
       position: absolute; cursor: pointer; inset: 0;
-      background: #333; border-radius: 22px; transition: 0.3s;
+      background: rgba(255,255,255,0.12); border-radius: 22px; transition: 0.3s;
     }
     .toggle .slider::before {
       content: ''; position: absolute; width: 16px; height: 16px;
       left: 3px; bottom: 3px; background: white;
       border-radius: 50%; transition: 0.3s;
     }
-    .toggle input:checked + .slider { background: #7c3aed; }
-    .toggle input:checked + .slider::before { transform: translateX(18px); }
+    .toggle input:checked + .slider { background: #fff; }
+    .toggle input:checked + .slider::before { transform: translateX(18px); background: #0a0a0c; }
 
-    .actions { display: flex; gap: 8px; padding-top: 4px; }
-    .btn {
-      flex: 1; padding: 10px; border: none; border-radius: 8px;
-      font-size: 13px; font-weight: 600; cursor: pointer;
+    .login-actions {
+      display: flex;
+      gap: 8px;
+      padding-top: 4px;
+    }
+    .btn-action {
+      flex: 1;
+      padding: 11px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
       transition: all 0.2s;
+      font-family: 'Inter', sans-serif;
     }
-    .btn-primary {
-      background: linear-gradient(135deg, #7c3aed, #6d28d9);
-      color: white;
+    .btn-save {
+      background: #fff;
+      color: #0a0a0c;
     }
-    .btn-primary:hover { filter: brightness(1.1); }
-    .btn-secondary {
-      background: #27272a; color: #e4e4e7;
+    .btn-save:hover { background: #e4e4e7; transform: translateY(-1px); }
+    .btn-test {
+      background: rgba(255,255,255,0.06);
+      color: #a1a1aa;
+      border: 1px solid rgba(255,255,255,0.08);
     }
-    .btn-secondary:hover { background: #333; }
+    .btn-test:hover {
+      background: rgba(255,255,255,0.1);
+      color: #e4e4e7;
+    }
 
-    .save-msg {
-      text-align: center; font-size: 12px;
-      padding: 8px; border-radius: 6px; display: none;
-    }
-    .save-msg.success { display: block; background: #22c55e15; color: #22c55e; border: 1px solid #22c55e30; }
-    .save-msg.error { display: block; background: #ef444415; color: #ef4444; border: 1px solid #ef444430; }
-
-    .footer {
-      padding: 12px 20px;
-      border-top: 1px solid #27272a;
+    .msg-bar {
       text-align: center;
-      font-size: 11px; color: #52525b;
+      font-size: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      display: none;
+      animation: fadeSlideIn 0.25s ease;
     }
-    .footer kbd {
-      background: #27272a; padding: 2px 6px; border-radius: 4px;
-      font-family: inherit; font-size: 11px;
+    .msg-bar.success {
+      display: block;
+      background: rgba(34, 197, 94, 0.06);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, 0.12);
+    }
+    .msg-bar.error {
+      display: block;
+      background: rgba(239, 68, 68, 0.06);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.12);
+    }
+
+    /* ═══ Settings Page (connected state) ═══ */
+    #page-settings {
+      min-height: 420px;
+      padding: 0;
+    }
+    .settings-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 18px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .settings-logo {
+      width: 90px;
+      filter: invert(1);
+      opacity: 0.85;
+    }
+    .status-badge {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #52525b;
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+    }
+    .status-dot.online { background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.3); }
+    .status-dot.offline { background: #ef4444; }
+    .status-dot.checking { background: #fbbf24; animation: pulse 1s infinite; }
+    @keyframes pulse { 50% { opacity: 0.3; } }
+
+    .settings-body {
+      padding: 18px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .settings-info {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px;
+    }
+    .settings-info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .settings-info-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: #52525b;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .settings-info-value {
+      font-size: 12px;
+      color: #a1a1aa;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .btn-logout {
+      background: transparent;
+      color: #ef4444;
+      border: 1px solid rgba(239,68,68,0.15);
+      border-radius: 8px;
+      padding: 9px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      width: 100%;
+      font-family: 'Inter', sans-serif;
+    }
+    .btn-logout:hover {
+      background: rgba(239,68,68,0.06);
+      border-color: rgba(239,68,68,0.25);
+    }
+
+    .settings-footer {
+      padding: 12px 24px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      text-align: center;
+      font-size: 11px;
+      color: #27272a;
+    }
+    .settings-footer kbd {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 11px;
+      color: #3f3f46;
     }
   </style>
-  <script type="module" crossorigin src="/assets/popup.html-CrxalEGy.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/index-DCh6icrO.js">
-  <link rel="modulepreload" crossorigin href="/assets/api-B9mn3sQE.js">
+  <script type="module" crossorigin src="/assets/popup.html-CbKjzJc_.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/index-CsX1Wpgk.js">
+  <link rel="modulepreload" crossorigin href="/assets/api-B-1Tes7C.js">
 </head>
 <body>
-  <div class="header">
-    <div class="header-icon">X</div>
-    <div class="header-text">
-      <h1>XMem</h1>
-      <p>Intelligent Memory for AI</p>
+
+  <!-- ═══ Page 1: Welcome ═══ -->
+  <div id="page-welcome" class="page active">
+    <img src="/assets/logo-DKD06kmV.png" alt="XMem" class="welcome-logo" />
+    <p class="welcome-tagline">Intelligent Memory for AI</p>
+    <div class="welcome-btns">
+      <button class="btn-welcome btn-continue" id="btn-has-key">I Have a Key</button>
+      <a href="https://xmem.in" target="_blank" class="btn-welcome btn-create" id="btn-create-key">Create Account on XMem.in</a>
     </div>
+    <p class="welcome-note">
+      Create your API key and username at<br />
+      <a href="https://xmem.in" target="_blank">xmem.in</a> to get started.
+    </p>
   </div>
 
-  <div class="status-bar">
-    <div id="statusDot" class="status-dot checking"></div>
-    <span id="statusText">Checking connection...</span>
-  </div>
-
-  <div class="body">
-    <div class="field">
-      <label>API Server URL</label>
-      <input type="url" id="apiUrl" placeholder="http://localhost:8000" />
+  <!-- ═══ Page 2: Login ═══ -->
+  <div id="page-login" class="page">
+    <div class="login-header">
+      <img src="/assets/logo-DKD06kmV.png" alt="XMem" class="login-logo" />
+      <button class="login-back" id="btn-back">← Back</button>
     </div>
-
-    <div class="field">
-      <label>API Key</label>
-      <input type="password" id="apiKey" placeholder="Enter your XMem API key" />
-    </div>
-
-    <div class="field">
-      <label>User ID</label>
-      <input type="text" id="userId" placeholder="chrome-extension-user" />
-    </div>
-
-    <div class="toggle-row">
-      <div class="label-group">
-        <span>Memory Active</span>
-        <span>Auto-save & suggest memories</span>
+    <div class="login-body">
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="username" placeholder="Your XMem username" autocomplete="off" />
       </div>
-      <label class="toggle">
-        <input type="checkbox" id="enableToggle" checked />
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <div class="toggle-row">
-      <div class="label-group">
-        <span>Live Suggestions</span>
-        <span>Show memories as you type</span>
+      <div class="field">
+        <label>API Key</label>
+        <input type="password" id="apiKey" placeholder="xmem_xxxxxxxxxxxxxxxx" autocomplete="off" />
       </div>
-      <label class="toggle">
-        <input type="checkbox" id="liveToggle" checked />
-        <span class="slider"></span>
-      </label>
-    </div>
 
-    <div class="actions">
-      <button class="btn btn-primary" id="saveBtn">Save Settings</button>
-      <button class="btn btn-secondary" id="testBtn">Test</button>
-    </div>
+      <div class="toggle-row">
+        <div class="label-group">
+          <span>Memory Active</span>
+          <span>Auto-save & suggest memories</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="enableToggle" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
 
-    <div id="saveMsg" class="save-msg"></div>
+      <div class="toggle-row">
+        <div class="label-group">
+          <span>Live Suggestions</span>
+          <span>Show memories as you type</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="liveToggle" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="login-actions">
+        <button class="btn-action btn-save" id="saveBtn">Save Settings</button>
+        <button class="btn-action btn-test" id="testBtn">Test</button>
+      </div>
+
+      <div id="msgBar" class="msg-bar"></div>
+    </div>
   </div>
 
-  <div class="footer">
-    Toggle sidebar: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd>
+  <!-- ═══ Page 3: Connected Settings ═══ -->
+  <div id="page-settings" class="page">
+    <div class="settings-header">
+      <img src="/assets/logo-DKD06kmV.png" alt="XMem" class="settings-logo" />
+      <div class="status-badge">
+        <div id="statusDot" class="status-dot checking"></div>
+        <span id="statusText">Checking...</span>
+      </div>
+    </div>
+    <div class="settings-body">
+      <div class="settings-info">
+        <div class="settings-info-row">
+          <span class="settings-info-label">Username</span>
+          <span class="settings-info-value" id="display-username">—</span>
+        </div>
+        <div class="settings-info-row">
+          <span class="settings-info-label">API Key</span>
+          <span class="settings-info-value" id="display-key">—</span>
+        </div>
+      </div>
+
+      <div class="toggle-row">
+        <div class="label-group">
+          <span>Memory Active</span>
+          <span>Auto-save & suggest memories</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="enableToggle2" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <div class="label-group">
+          <span>Live Suggestions</span>
+          <span>Show memories as you type</span>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="liveToggle2" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div id="msgBar2" class="msg-bar"></div>
+
+      <button class="btn-logout" id="logoutBtn">Disconnect & Reset</button>
+    </div>
+    <div class="settings-footer">
+      Toggle sidebar: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>M</kbd>
+    </div>
   </div>
 
 </body>

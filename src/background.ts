@@ -5,8 +5,10 @@
 
 import { XMemClient } from 'xmem-ai';
 
+/** Hardcoded API endpoint — never exposed to end users. */
+const API_BASE_URL = 'https://api.xmem.in';
+
 interface XMemConfig {
-  apiUrl: string;
   apiKey: string;
   userId: string;
 }
@@ -16,11 +18,10 @@ let _cachedConfigKey = '';
 
 async function getConfig(): Promise<XMemConfig> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['xmem_api_url', 'xmem_api_key', 'xmem_user_id'], (data) => {
+    chrome.storage.sync.get(['xmem_api_key', 'xmem_user_id'], (data) => {
       resolve({
-        apiUrl: data.xmem_api_url || 'http://localhost:8000',
         apiKey: data.xmem_api_key || '',
-        userId: data.xmem_user_id || 'chrome-extension-user',
+        userId: data.xmem_user_id || '',
       });
     });
   });
@@ -28,9 +29,9 @@ async function getConfig(): Promise<XMemConfig> {
 
 async function getClient(): Promise<{ client: XMemClient; userId: string }> {
   const config = await getConfig();
-  const configKey = `${config.apiUrl}|${config.apiKey}`;
+  const configKey = `${config.apiKey}|${config.userId}`;
   if (!_cachedClient || configKey !== _cachedConfigKey) {
-    _cachedClient = new XMemClient(config.apiUrl, config.apiKey);
+    _cachedClient = new XMemClient(API_BASE_URL, config.apiKey, config.userId);
     _cachedConfigKey = configKey;
   }
   return { client: _cachedClient, userId: config.userId };

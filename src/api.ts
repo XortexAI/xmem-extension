@@ -1,6 +1,8 @@
 /**
  * XMem API layer for the Chrome extension.
  * Wraps the xmem-ai SDK client, pulling config from chrome.storage.
+ *
+ * API URL is hardcoded to https://api.xmem.in — not exposed to users.
  */
 
 import { XMemClient } from 'xmem-ai';
@@ -20,8 +22,10 @@ export type {
   CodeQueryResult, DirectoryTreeResult, DirectoryNode, RepoListResult,
 };
 
+/** Hardcoded API endpoint — never exposed to end users. */
+const API_BASE_URL = 'https://api.xmem.in';
+
 export interface XMemConfig {
-  apiUrl: string;
   apiKey: string;
   userId: string;
 }
@@ -33,7 +37,7 @@ let _cachedConfigKey = '';
 if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'sync') {
-      if (changes.xmem_api_url || changes.xmem_api_key) {
+      if (changes.xmem_api_key || changes.xmem_user_id) {
         console.log('[XMem] Config changed, invalidating cached client');
         _cachedClient = null;
         _cachedConfigKey = '';
@@ -46,11 +50,10 @@ if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
 
 export async function getConfig(): Promise<XMemConfig> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['xmem_api_url', 'xmem_api_key', 'xmem_user_id'], (data) => {
+    chrome.storage.sync.get(['xmem_api_key', 'xmem_user_id'], (data) => {
       resolve({
-        apiUrl: data.xmem_api_url || 'http://localhost:8000',
         apiKey: data.xmem_api_key || '',
-        userId: data.xmem_user_id || 'chrome-extension-user',
+        userId: data.xmem_user_id || '',
       });
     });
   });
@@ -59,7 +62,6 @@ export async function getConfig(): Promise<XMemConfig> {
 export async function saveConfig(config: Partial<XMemConfig>): Promise<void> {
   return new Promise((resolve) => {
     const payload: Record<string, string> = {};
-    if (config.apiUrl !== undefined) payload.xmem_api_url = config.apiUrl;
     if (config.apiKey !== undefined) payload.xmem_api_key = config.apiKey;
     if (config.userId !== undefined) payload.xmem_user_id = config.userId;
     chrome.storage.sync.set(payload, resolve);
@@ -70,10 +72,10 @@ export async function saveConfig(config: Partial<XMemConfig>): Promise<void> {
 
 async function getClient(): Promise<{ client: XMemClient; userId: string }> {
   const config = await getConfig();
-  const configKey = `${config.apiUrl}|${config.apiKey}`;
+  const configKey = `${config.apiKey}|${config.userId}`;
 
   if (!_cachedClient || configKey !== _cachedConfigKey) {
-    _cachedClient = new XMemClient(config.apiUrl, config.apiKey);
+    _cachedClient = new XMemClient(API_BASE_URL, config.apiKey, config.userId);
     _cachedConfigKey = configKey;
   }
 
@@ -210,8 +212,7 @@ export async function checkHealth(): Promise<boolean> {
 
 export async function getHealthStatus(): Promise<HealthStatus> {
   const { client } = await getClient();
-  const config = await getConfig();
-  console.log('[XMem] Getting health status from:', config.apiUrl);
+  console.log('[XMem] Getting health status from:', API_BASE_URL);
   try {
     const status = await client.ping();
     console.log('[XMem] Health status:', status);
@@ -219,6 +220,39 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   } catch (err) {
     console.error('[XMem] Health status error:', err);
     throw err;
+  }
+}
+
+export async function validateCredentials(apiKey: string, username: string): Promise<boolean> {
+  const url = `${API_BASE_URL}/auth/verify-key`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      console.log('[XMem] Validation failed: HTTP', response.status);
+      return false; // Key might be invalid
+    }
+
+    const data = await response.json();
+    console.log('[XMem] Validated user data:', data);
+    
+    // Check if the username returned by the backend matches what the user entered
+    if (data.username && data.username.toLowerCase() === username.toLowerCase()) {
+      return true;
+    }
+    
+    console.error('[XMem] Validation failed: Username mismatch.', {
+      entered: username,
+      actual: data.username
+    });
+    return false;
+  } catch (err) {
+    console.error('[XMem] Credential validation network error:', err);
+    return false;
   }
 }
 
@@ -258,7 +292,7 @@ export async function streamCodeQuery(
   opts: { topK?: number } = {},
 ): Promise<void> {
   const config = await getConfig();
-  const url = `${config.apiUrl}/v1/code/query_stream`;
+  const url = `${API_BASE_URL}/v1/code/query_stream`;
   
   const response = await fetch(url, {
     method: 'POST',
@@ -331,5 +365,37 @@ export async function listRepos(
   } catch (err) {
     console.error('[XMem] List repos error:', err);
     throw err;
+  }
+}
+
+// ─── Scanner Repos (fetch user's indexed repos from scanner) ──────────────
+
+export interface ScannerRepo {
+  org: string;
+  repo: string;
+  phase1_status: string;
+  phase2_status: string;
+}
+
+export async function listScannerRepos(): Promise<ScannerRepo[]> {
+  const config = await getConfig();
+  if (!config.userId) return [];
+
+  const url = `${API_BASE_URL}/v1/scanner/repos?username=${encodeURIComponent(config.userId)}`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+    });
+    if (!response.ok) {
+      console.error('[XMem] Scanner repos error:', response.status);
+      return [];
+    }
+    const data = await response.json();
+    return (data.repos || []) as ScannerRepo[];
+  } catch (err) {
+    console.error('[XMem] Scanner repos error:', err);
+    return [];
   }
 }

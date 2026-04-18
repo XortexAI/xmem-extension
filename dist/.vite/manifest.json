@@ -1,52 +1,65 @@
 {
   "../../../../../@crx/manifest": {
-    "file": "assets/crx-manifest.js-WOO_gOs5.js",
+    "file": "assets/crx-manifest.js-BWNHOAJO.js",
     "name": "crx-manifest.js",
     "src": "../../../../../@crx/manifest",
     "isEntry": true
   },
-  "_api-B9mn3sQE.js": {
-    "file": "assets/api-B9mn3sQE.js",
-    "name": "api",
-    "imports": [
-      "_index-DCh6icrO.js"
-    ]
-  },
-  "_index-DCh6icrO.js": {
-    "file": "assets/index-DCh6icrO.js",
+  "_index-CsX1Wpgk.js": {
+    "file": "assets/index-CsX1Wpgk.js",
     "name": "index"
   },
   "content.ts-loader.js": {
-    "file": "assets/content.ts-loader-B6eVEfgS.js",
+    "file": "assets/content.ts-loader-DZDTax6x.js",
     "src": "content.ts-loader.js"
   },
+  "icons/logo.png": {
+    "file": "assets/logo-DKD06kmV.png",
+    "src": "icons/logo.png"
+  },
+  "src/api.ts": {
+    "file": "assets/api-B-1Tes7C.js",
+    "name": "api",
+    "src": "src/api.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_index-CsX1Wpgk.js"
+    ]
+  },
   "src/background.ts": {
-    "file": "assets/background.ts-BvUyC87O.js",
+    "file": "assets/background.ts-D-BqfmSv.js",
     "name": "background.ts",
     "src": "src/background.ts",
     "isEntry": true,
     "imports": [
-      "_index-DCh6icrO.js"
+      "_index-CsX1Wpgk.js"
     ]
   },
   "src/content.ts": {
-    "file": "assets/content.ts-BNeWrR_Y.js",
+    "file": "assets/content.ts-DXHI8QpS.js",
     "name": "content.ts",
     "src": "src/content.ts",
     "isEntry": true,
     "imports": [
-      "_api-B9mn3sQE.js",
-      "_index-DCh6icrO.js"
+      "src/api.ts",
+      "_index-CsX1Wpgk.js"
+    ],
+    "dynamicImports": [
+      "src/api.ts",
+      "src/api.ts"
     ]
   },
   "src/popup.html": {
-    "file": "assets/popup.html-CrxalEGy.js",
+    "file": "assets/popup.html-CbKjzJc_.js",
     "name": "popup.html",
     "src": "src/popup.html",
     "isEntry": true,
     "imports": [
-      "_api-B9mn3sQE.js",
-      "_index-DCh6icrO.js"
+      "src/api.ts",
+      "_index-CsX1Wpgk.js"
+    ],
+    "assets": [
+      "assets/logo-DKD06kmV.png"
     ]
   }
 }
