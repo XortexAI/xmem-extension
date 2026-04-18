@@ -3,7 +3,7 @@
  * Wraps the xmem-ai SDK client, pulling config from chrome.storage.
  */
 
-import { XMemClient } from 'xmem-ai';
+import * as XMemSDK from 'xmem-ai';
 import type {
   SourceRecord,
   IngestResult,
@@ -23,17 +23,23 @@ export type {
 export interface XMemConfig {
   apiUrl: string;
   apiKey: string;
+  username: string;
   userId: string;
 }
 
-let _cachedClient: XMemClient | null = null;
+let _cachedClient: XMemSDK.XMemClient | null = null;
 let _cachedConfigKey = '';
 
 // Invalidate cached client when settings change
 if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'sync') {
-      if (changes.xmem_api_url || changes.xmem_api_key) {
+      if (
+        changes.xmem_api_url ||
+        changes.xmem_api_key ||
+        changes.xmem_username ||
+        changes.xmem_user_id
+      ) {
         console.log('[XMem] Config changed, invalidating cached client');
         _cachedClient = null;
         _cachedConfigKey = '';
@@ -46,13 +52,20 @@ if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
 
 export async function getConfig(): Promise<XMemConfig> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['xmem_api_url', 'xmem_api_key', 'xmem_user_id'], (data) => {
-      resolve({
-        apiUrl: data.xmem_api_url || 'http://localhost:8000',
-        apiKey: data.xmem_api_key || '',
-        userId: data.xmem_user_id || 'chrome-extension-user',
-      });
-    });
+    chrome.storage.sync.get(
+      ['xmem_api_url', 'xmem_api_key', 'xmem_username', 'xmem_user_id'],
+      (data) => {
+        resolve({
+          apiUrl: data.xmem_api_url || 'http://localhost:8000',
+          apiKey: data.xmem_api_key || '',
+          username:
+            data.xmem_username ||
+            data.xmem_user_id ||
+            'chrome-extension-user',
+          userId: data.xmem_user_id || 'chrome-extension-user',
+        });
+      },
+    );
   });
 }
 
@@ -61,6 +74,7 @@ export async function saveConfig(config: Partial<XMemConfig>): Promise<void> {
     const payload: Record<string, string> = {};
     if (config.apiUrl !== undefined) payload.xmem_api_url = config.apiUrl;
     if (config.apiKey !== undefined) payload.xmem_api_key = config.apiKey;
+    if (config.username !== undefined) payload.xmem_username = config.username;
     if (config.userId !== undefined) payload.xmem_user_id = config.userId;
     chrome.storage.sync.set(payload, resolve);
   });
@@ -68,12 +82,20 @@ export async function saveConfig(config: Partial<XMemConfig>): Promise<void> {
 
 // ─── SDK Client ───────────────────────────────────────────────────────────
 
-async function getClient(): Promise<{ client: XMemClient; userId: string }> {
+async function getClient(): Promise<{ client: XMemSDK.XMemClient; userId: string }> {
   const config = await getConfig();
-  const configKey = `${config.apiUrl}|${config.apiKey}`;
+  const apiKey = config.apiKey.trim();
+  const username = config.username.trim();
+  if (!apiKey || !username) {
+    throw new Error(
+      'XMem username and API key are required. Configure them in the extension popup.',
+    );
+  }
+
+  const configKey = `${config.apiUrl}|${apiKey}|${username}`;
 
   if (!_cachedClient || configKey !== _cachedConfigKey) {
-    _cachedClient = new XMemClient(config.apiUrl, config.apiKey);
+    _cachedClient = new XMemSDK.XMemClient(config.apiUrl, apiKey, username);
     _cachedConfigKey = configKey;
   }
 
@@ -258,14 +280,25 @@ export async function streamCodeQuery(
   opts: { topK?: number } = {},
 ): Promise<void> {
   const config = await getConfig();
+  const apiKey = config.apiKey.trim();
+  const username = config.username.trim();
+  if (!apiKey || !username) {
+    throw new Error(
+      'XMem username and API key are required. Configure them in the extension popup.',
+    );
+  }
+
   const url = `${config.apiUrl}/v1/code/query_stream`;
-  
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+    [XMemSDK.XMEM_USERNAME_HEADER]: username,
+  };
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`
-    },
+    headers,
     body: JSON.stringify({
       org_id: orgId,
       repo,

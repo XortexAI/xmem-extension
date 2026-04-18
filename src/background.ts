@@ -3,34 +3,66 @@
  * Handles context menus, extension lifecycle, and message routing.
  */
 
-import { XMemClient } from 'xmem-ai';
+import * as XMemSDK from 'xmem-ai';
 
 interface XMemConfig {
   apiUrl: string;
   apiKey: string;
+  username: string;
   userId: string;
 }
 
-let _cachedClient: XMemClient | null = null;
+let _cachedClient: XMemSDK.XMemClient | null = null;
 let _cachedConfigKey = '';
 
-async function getConfig(): Promise<XMemConfig> {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get(['xmem_api_url', 'xmem_api_key', 'xmem_user_id'], (data) => {
-      resolve({
-        apiUrl: data.xmem_api_url || 'http://localhost:8000',
-        apiKey: data.xmem_api_key || '',
-        userId: data.xmem_user_id || 'chrome-extension-user',
-      });
-    });
+if (chrome.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'sync') {
+      if (
+        changes.xmem_api_url ||
+        changes.xmem_api_key ||
+        changes.xmem_username ||
+        changes.xmem_user_id
+      ) {
+        _cachedClient = null;
+        _cachedConfigKey = '';
+      }
+    }
   });
 }
 
-async function getClient(): Promise<{ client: XMemClient; userId: string }> {
+async function getConfig(): Promise<XMemConfig> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(
+      ['xmem_api_url', 'xmem_api_key', 'xmem_username', 'xmem_user_id'],
+      (data) => {
+        resolve({
+          apiUrl: data.xmem_api_url || 'http://localhost:8000',
+          apiKey: data.xmem_api_key || '',
+          username:
+            data.xmem_username ||
+            data.xmem_user_id ||
+            'chrome-extension-user',
+          userId: data.xmem_user_id || 'chrome-extension-user',
+        });
+      },
+    );
+  });
+}
+
+async function getClient(): Promise<{ client: XMemSDK.XMemClient; userId: string }> {
   const config = await getConfig();
-  const configKey = `${config.apiUrl}|${config.apiKey}`;
+  const apiKey = config.apiKey.trim();
+  const username = config.username.trim();
+  if (!apiKey || !username) {
+    throw new Error(
+      'XMem username and API key are required. Configure them in the extension popup.',
+    );
+  }
+
+  const configKey = `${config.apiUrl}|${apiKey}|${username}`;
   if (!_cachedClient || configKey !== _cachedConfigKey) {
-    _cachedClient = new XMemClient(config.apiUrl, config.apiKey);
+    _cachedClient = new XMemSDK.XMemClient(config.apiUrl, apiKey, username);
     _cachedConfigKey = configKey;
   }
   return { client: _cachedClient, userId: config.userId };

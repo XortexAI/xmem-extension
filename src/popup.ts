@@ -7,6 +7,7 @@ import { checkHealth, getConfig, getHealthStatus, saveConfig } from './api';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const apiUrlInput = document.getElementById('apiUrl') as HTMLInputElement;
+  const usernameInput = document.getElementById('username') as HTMLInputElement;
   const apiKeyInput = document.getElementById('apiKey') as HTMLInputElement;
   const userIdInput = document.getElementById('userId') as HTMLInputElement;
   const enableToggle = document.getElementById('enableToggle') as HTMLInputElement;
@@ -19,8 +20,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const config = await getConfig();
   apiUrlInput.value = config.apiUrl;
+  usernameInput.value = config.username;
   apiKeyInput.value = config.apiKey;
   userIdInput.value = config.userId;
+
+  function credentialError(): string | null {
+    if (!usernameInput.value.trim()) return 'Username is required.';
+    if (!apiKeyInput.value.trim()) return 'API key is required.';
+    return null;
+  }
 
   chrome.storage.sync.get(['xmem_enabled', 'xmem_live_suggest'], (data) => {
     enableToggle.checked = data.xmem_enabled !== false;
@@ -28,6 +36,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   async function updateStatus() {
+    const cfg = await getConfig();
+    if (!cfg.username.trim() || !cfg.apiKey.trim()) {
+      statusDot.className = 'status-dot offline';
+      statusText.textContent = 'Username and API key required';
+      return;
+    }
+
     statusDot.className = 'status-dot checking';
     statusText.textContent = 'Checking connection...';
     try {
@@ -42,18 +57,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         statusDot.className = 'status-dot checking';
         statusText.textContent = 'Server up, pipelines loading...';
       }
-    } catch {
+    } catch (err) {
       statusDot.className = 'status-dot offline';
-      statusText.textContent = 'Cannot reach XMem server';
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('username and API key')) {
+        statusText.textContent = 'Username and API key required';
+      } else {
+        statusText.textContent = 'Cannot reach XMem server';
+      }
     }
   }
 
   await updateStatus();
 
   saveBtn.addEventListener('click', async () => {
+    const errMsg = credentialError();
+    if (errMsg) {
+      saveMsg.textContent = errMsg;
+      saveMsg.className = 'save-msg error';
+      setTimeout(() => { saveMsg.className = 'save-msg'; }, 4000);
+      return;
+    }
+
     await saveConfig({
       apiUrl: apiUrlInput.value.replace(/\/+$/, ''),
-      apiKey: apiKeyInput.value,
+      username: usernameInput.value.trim(),
+      apiKey: apiKeyInput.value.trim(),
       userId: userIdInput.value || 'chrome-extension-user',
     });
     chrome.storage.sync.set({
@@ -69,9 +98,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   testBtn.addEventListener('click', async () => {
+    const errMsg = credentialError();
+    if (errMsg) {
+      saveMsg.textContent = errMsg;
+      saveMsg.className = 'save-msg error';
+      setTimeout(() => { saveMsg.className = 'save-msg'; }, 4000);
+      return;
+    }
+
     await saveConfig({
       apiUrl: apiUrlInput.value.replace(/\/+$/, ''),
-      apiKey: apiKeyInput.value,
+      username: usernameInput.value.trim(),
+      apiKey: apiKeyInput.value.trim(),
       userId: userIdInput.value || 'chrome-extension-user',
     });
 
@@ -80,7 +118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       saveMsg.textContent = 'Connection successful — pipelines ready!';
       saveMsg.className = 'save-msg success';
     } else {
-      saveMsg.textContent = 'Cannot connect. Check URL and API key.';
+      saveMsg.textContent = 'Cannot connect. Check URL, username, and API key.';
       saveMsg.className = 'save-msg error';
     }
     setTimeout(() => { saveMsg.className = 'save-msg'; }, 4000);
