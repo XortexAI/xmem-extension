@@ -46,26 +46,9 @@ chrome.runtime.onInstalled.addListener(() => {
     }
   });
 
-  chrome.contextMenus.create({
-    id: 'xmem-save-selection',
-    title: 'Save to XMem Memory',
-    contexts: ['selection'],
-  });
+
 });
 
-chrome.contextMenus.onClicked.addListener(async (info) => {
-  if (info.menuItemId === 'xmem-save-selection' && info.selectionText) {
-    try {
-      const { client, userId } = await getClient();
-      await client.ingest({
-        user_query: `Remember this: ${info.selectionText}`,
-        user_id: userId,
-      });
-    } catch (err) {
-      console.error('XMem: Failed to save selection', err);
-    }
-  }
-});
 
 // ─── Message Handler ──────────────────────────────────────────────────────
 
